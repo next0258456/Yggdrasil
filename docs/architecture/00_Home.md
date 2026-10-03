@@ -13,4 +13,4 @@ Chi tiết về các công cụ và lớp công nghệ được sử dụng nằ
 - Luồng Ingestion & Medallion Architecture
 - Luồng Orchestration (n8n & Airflow)
 - Luồng BI Serving & RLS Security
-- Luồng Generative AI (Mimir Bot)
+- Luồng LLM Semantic Router (Mimir Bot)
