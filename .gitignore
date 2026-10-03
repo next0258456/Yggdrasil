@@ -1,23 +1,14 @@
-﻿# Environments
+# Environments
 .env
 .venv
 env/
 venv/
 ENV/
-env.bak/
-venv.bak/
-
-# Y7L Secrets & Configs
-98_Credentials/
-token.json
-credentials.json
-*.pem
-*.key
 
 # Python
 __pycache__/
 *.py[cod]
-*.class
+*$py.class
 *.so
 .pytest_cache/
 .coverage
@@ -27,6 +18,14 @@ htmlcov/
 airflow.cfg
 airflow.db
 logs/
+
+# Y7L Secrets & Configs
+98_Credentials/
+*.pem
+*.key
+
+# Restricted File Types
+*.json
 
 # Mac/Windows
 .DS_Store
