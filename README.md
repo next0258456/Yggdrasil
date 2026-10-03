@@ -10,14 +10,14 @@ Yggdrasil v0.1 là nền tảng Data Lakehouse được thiết kế tối giả
 - **Table Format**: Apache Iceberg
 - **Catalog**: Postgres JDBC Catalog (Single Source of Truth)
 - **Compute Engine**: Polars LazyFrame (ETL) & DuckDB (OLAP)
-- **Orchestration**: n8n (Configurator) trigger Airflow 3 (Parameterized DAG)
+- **Orchestration**: n8n (External Integrations) & Airflow 3 (Internal Orchestrator)
 - **BI & Security Gateway**: Apache Superset (Enforce RLS & JWT)
 - **Agentic Analytics**: Mimir Bot tích hợp Obsidian Local REST API
 
 ## 🚀 Nguyên Lý Thiết Kế (The Y7L Way)
 
 1. **Decoupled Compute & Storage**: Tách biệt hoàn toàn tính toán và lưu trữ. Storage lưu bằng chuẩn mở Iceberg, đảm bảo tính linh hoạt khi kết nối với các Engine khác nhau.
-2. **Configuration-Driven Pipelines**: Áp dụng mô hình điều phối phân tầng (Decoupled Orchestration). Người dùng chỉ cần khai báo metadata, n8n đảm nhiệm vai trò Control Plane để gọi REST API và kích hoạt một Parameterized DAG tập trung trên Airflow. Giảm thiểu việc duy trì mã nguồn Python/YAML thủ công cho từng luồng dữ liệu.
+2. **Dual-Engine Orchestration**: Phân tách rõ ràng vùng lãnh thổ điều phối. n8n làm nhiệm vụ giao tiếp ngoại vi (External Integrations, webhook, thu thập dữ liệu), trong khi Airflow 3 chịu trách nhiệm điều phối lõi nội bộ (Internal Orchestrator) bằng các Parameterized DAGs.
 3. **Data-Blind AI (Zero Leakage)**: AI Agent chỉ có quyền đọc siêu dữ liệu (Metadata/Schema) để phân tích ngữ cảnh (Intent). Tuyệt đối không được cấp quyền đọc dữ liệu thô. Mọi truy xuất dữ liệu thực tế phải thông qua cổng bảo mật của Superset (JWT).
 4. **Single-Node Optimization**: Tối ưu hóa trên kiến trúc Vertical Scaling. Sử dụng Polars để xử lý và chuyển đổi dữ liệu thô (Bronze $\to$ Silver) và DuckDB để phục vụ truy vấn OLAP tốc độ cao, thay thế cho các kiến trúc phân tán phức tạp.
 
@@ -25,8 +25,8 @@ Yggdrasil v0.1 là nền tảng Data Lakehouse được thiết kế tối giả
 
 ```text
 Yggdrasil/
-├── dags/          # Airflow Parameterized DAGs (Xử lý tập trung)
-├── n8n/           # Workflows JSON của n8n (Control Plane / Orchestrator)
+├── dags/          # Airflow Parameterized DAGs (Internal Orchestrator)
+├── n8n/           # Workflows JSON của n8n (External Integrations)
 ├── scripts/       # Polars ETL & DuckDB execution scripts
 ├── docs/          # Thiết kế kỹ thuật & ADR (Export từ Obsidian)
 ├── .agents/       # Tiêu chuẩn và bộ kỹ năng Agentic Software Engineering
