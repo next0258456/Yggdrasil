@@ -20,11 +20,11 @@ Dưới đây là các quyết định (Lý do đi chợ) giải thích chi ti�
     - *Lớp 1 (Database Level)*: Kích hoạt cơ chế **Postgres WAL Archiving**, liên tục đẩy file log (WAL) sang ổ cứng/MinIO để có thể khôi phục lại toàn vẹn cơ sở dữ liệu Postgres bất cứ lúc nào (Point-in-Time Recovery).
     - *Lớp 2 (Format Level)*: Trong trường hợp Postgres bị hủy diệt vĩnh viễn, ta tận dụng sức mạnh phi tập trung của Iceberg. Vì Iceberg lưu toàn bộ file cấu trúc (`.metadata.json`) ngay trên MinIO cùng với dữ liệu Parquet, ta chỉ cần dựng 1 máy chủ Postgres mới tinh, gọi lệnh `register_table` trỏ vào MinIO là hệ thống Catalog sẽ "hồi sinh" nguyên vẹn từ cõi chết.
 
-### 2. Mâm Compute: Polars + DuckDB (Khai tử Apache Spark & Trino)
-- **Quyết định**: Sử dụng Polars (LazyFrame) làm động cơ ETL (Bronze $\to$ Silver) và DuckDB làm động cơ truy vấn phân tích chuyên trách tại tầng Gold.
+### 2. Mâm Compute: Polars + DuckDB (Khai tử Apache Spark, Trino & dbt)
+- **Quyết định**: Sử dụng Polars (LazyFrame) làm động cơ ETL (Bronze $\to$ Silver) và DuckDB làm động cơ truy vấn phân tích chuyên trách tại tầng Gold. Tuyệt đối không sử dụng `dbt` (Data Build Tool).
 - **Lập luận**:
   - **Triết lý Single-Node Big Data**: Với tập dữ liệu dưới ngưỡng 500GB - 1TB, cụm phân tán (Spark) là một sự lãng phí tài nguyên khủng khiếp.
-  - **Polars**: Được viết bằng Rust, Polars khai thác tối đa đa lõi CPU/RAM, tốc độ xử lý nhanh gấp nhiều lần Spark ở quy mô vừa, chịu trách nhiệm xử lý chuyển đổi dữ liệu nặng (Heavy-lifting ETL).
+  - **Polars & Khai tử dbt**: Được viết bằng Rust, Polars khai thác tối đa đa lõi CPU/RAM, tốc độ xử lý nhanh gấp nhiều lần Spark ở quy mô vừa. Đặc biệt, bài toán lõi ở hệ thống này là **Đối soát liên tục (Continuous Reconciliation)** thông qua các phép ghép bảng (`FULL OUTER JOIN`). Việc rước `dbt` vào chỉ để chạy các phép Join cơ bản là sự "Over-engineering" trầm trọng. Polars xử lý Hash Join siêu tốc chỉ bằng một dòng code Python (`df.join(how="outer")`), đủ sức gánh vác toàn bộ trọng trách của `dbt` mà vẫn giữ cho hệ thống tinh gọn tối đa.
   - **DuckDB & Quản trị RAM**: DuckDB bị giới hạn cấu hình chỉ được phép truy vấn tại tầng Gold (Data Marts/OBT). Kết quả kiểm thử thực tế (Benchmark) cho thấy: DuckDB có thể xử lý luồng luân chuyển cơ sở dữ liệu với khối lượng **6.8 triệu bản ghi chỉ trong 9.6 giây**. Với hiệu năng này, bài toán tràn RAM trên kiến trúc Single-Node được giải quyết triệt để, đồng thời tốc độ kết xuất báo cáo BI (Superset) đạt ngưỡng mili-giây.
 
 ### 3. Mâm Orchestration: n8n kết hợp Airflow 3 (Dual-Engine)
