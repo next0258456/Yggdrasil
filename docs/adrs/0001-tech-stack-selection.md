@@ -50,6 +50,25 @@ Dưới đây là các quyết định (Lý do đi chợ) giải thích chi ti�
   - **Data-Blind Text-to-SQL (Viết Code nhưng Bịt mắt)**: Mimir Bot VẪN ĐƯỢC CẤP QUYỀN tư duy, tự do viết câu lệnh SQL, tạo Template hoặc điền tham số (Parameters). **Tuy nhiên**, nó bị "bịt mắt" hoàn toàn khỏi dữ liệu thực. Não bộ của LLM chỉ được cung cấp Cấu trúc bảng (Schema) và Siêu dữ liệu (Metadata) để sinh ra luồng xử lý. Nó tuyệt đối không được cấp quyền `SELECT` để nhìn thấy dữ liệu thô.
   - **Deterministic Execution (Thực thi tất định)**: LLM đóng vai trò người "viết kịch bản" (Router/Template Generator). Còn người "diễn" (Thực thi SQL, áp dụng RLS, render kết quả) là hệ thống Engine phía sau (Superset/DuckDB). Điều này loại bỏ hoàn toàn rủi ro AI bịa số liệu (Hallucination) hoặc làm rò rỉ dữ liệu nhạy cảm.
 
-## Hậu quả (Consequences)
-- **Điểm tích cực**: Giảm 80% chi phí hạ tầng, loại bỏ hoàn toàn sự phức tạp của JVM/Cluster. Tốc độ phát triển (Developer Velocity) siêu tốc, thời gian query giảm xuống mức millisecond. Quản trị viên chỉ cần tập trung bảo trì 1 máy chủ vật lý mạnh mẽ.
-- **Điểm hạn chế**: Hệ thống bị giới hạn bởi sức mạnh vật lý của một Node duy nhất (Vertical Scaling). Nếu một ngày dữ liệu phình to lên mức nhiều Petabytes, phần Compute sẽ phải cấu trúc lại để scale ngang. Tuy nhiên, nhờ nguyên tắc **Decoupled Compute & Storage**, việc vứt bỏ Polars để thay bằng Engine phân tán trong tương lai là hoàn toàn khả thi và không gây mất mát dữ liệu.
+## ⚖️ Hậu quả & Đánh đổi (Consequences & Trade-offs)
+*Trong kiến trúc hệ thống, không có viên đạn bạc (No Silver Bullet). Mua được "Hiệu năng" và "Sự tối giản" thì nền tảng phải chấp nhận trả giá bằng 5 nhược điểm chí mạng sau:*
+
+1. **Giới hạn Scale ngang (The Vertical Scaling Trap)**
+   - *Mua:* Tốc độ xử lý sấm sét trên Single-Node, né được sự cồng kềnh, tốn kém của JVM/Cluster.
+   - *Trả:* Khi dữ liệu chạm ngưỡng chục Terabytes, ta không thể "cắm thêm máy" (Scale-out) như Spark/Hadoop, mà bắt buộc phải đốt tiền nâng cấp Server vật lý mạnh hơn (RAM/CPU to hơn).
+
+2. **Đứt gãy luồng truy vết (Dual-Engine Complexity)**
+   - *Mua:* Tối ưu tài nguyên tuyệt đối, Airflow không bị giam cầm bởi các luồng Polling chờ đợi vì đã có n8n gánh vác ở ranh giới ngoại vi.
+   - *Trả:* Khi một Pipeline thất bại, Data Engineer phải phân thân đi truy vết (Trace log) ở cả 2 nền tảng: Check n8n xem đã tải file vào MinIO thành công chưa, sau đó mới qua Airflow mò xem Polars chết ở dòng nào.
+
+3. **Vấn nạn "Mảnh vỡ file nhỏ" (The Small Files Problem)**
+   - *Mua:* Khả năng trích xuất dữ liệu liên tục thành các mẻ nhỏ (Mini-batch) qua n8n để đáp ứng SLA.
+   - *Trả:* Khi Iceberg bị băm thành hàng ngàn file Parquet vài KB, việc ép Polars quét (Scan) lượng file khổng lồ trên Single-Node sẽ gây phân mảnh RAM cực nặng và bóp nghẹt CPU. Hệ thống bắt buộc phải gánh thêm chi phí tài nguyên để chạy các luồng Compaction (Gom file) định kỳ.
+
+4. **Thiết kế Độc đạo (No Reverse Data Flow)**
+   - *Mua:* Loại bỏ hoàn toàn rủi ro xung đột ghi đồng thời (Concurrency Writes) và bảo vệ tuyệt đối tính toàn vẹn dữ liệu. Dữ liệu chỉ chảy một chiều duy nhất từ Bronze $\to$ Silver $\to$ Gold $\to$ BI.
+   - *Trả:* Triệt tiêu sự linh hoạt. Khi người dùng Business phát hiện sai số trên báo cáo (Superset), họ tuyệt đối không thể sửa hoặc ghi đè (Write-back) trực tiếp vào Lakehouse. Mọi sai sót bắt buộc phải quay về sửa tận gốc ở hệ thống Nguồn (Source) và chờ Pipeline chạy lại từ đầu.
+
+5. **Khấu hao hiệu năng giao thức (Object Storage Overhead)**
+   - *Mua:* Dùng chuẩn S3 API (MinIO) ngay trên máy Local để đảm bảo Code luôn ở trạng thái "Cloud-Ready", dễ dàng bốc lên AWS S3 mà không bị khóa chặt (Lock-in) vào ổ cứng vật lý.
+   - *Trả:* Dù MinIO chạy tại Local, việc Polars/DuckDB đọc file phải đi qua giao thức HTTP/S3 API thay vì đọc thẳng từ đĩa (Local NVMe) sẽ gây hao phí CPU cho việc đóng/mở gói mạng (Serialization). Tốc độ I/O thực tế sẽ bị suy hao một khoản nhất định so với truy xuất File System thuần túy.
