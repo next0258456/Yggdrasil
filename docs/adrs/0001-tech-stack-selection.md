@@ -1,4 +1,4 @@
-# ADR 0001: Lựa chọn Tech Stack cốt lõi cho Yggdrasil v0.1
+﻿# ADR 0001: Lựa chọn Tech Stack cốt lõi cho Yggdrasil v0.1
 
 - **Trạng thái**: Đã phê duyệt (Approved)
 - **Ngày quyết định**: 2026-10-03
@@ -25,7 +25,10 @@ Dưới đây là các quyết định (Lý do đi chợ) giải thích chi ti�
 - **Lập luận**:
   - **Triết lý Single-Node Big Data**: Với tập dữ liệu dưới ngưỡng 500GB - 1TB, cụm phân tán (Spark) là một sự lãng phí tài nguyên khủng khiếp.
   - **Polars**: Được viết bằng Rust, Polars khai thác tối đa đa lõi CPU/RAM, tốc độ xử lý nhanh gấp nhiều lần Spark ở quy mô vừa, chịu trách nhiệm xử lý chuyển đổi dữ liệu nặng (Heavy-lifting ETL).
-  - **DuckDB & Quản trị RAM**: DuckDB bị giới hạn cấu hình chỉ được phép truy vấn tại tầng Gold (Data Marts/OBT). Kết quả kiểm thử thực tế (Benchmark) cho thấy: DuckDB có thể xử lý luồng luân chuyển cơ sở dữ liệu với khối lượng **6.8 triệu bản ghi chỉ trong 9.6 giây**. Với hiệu năng này, bài toán tràn RAM trên kiến trúc Single-Node được giải quyết triệt để, đồng thời tốc độ kết xuất báo cáo BI (Superset) đạt ngưỡng mili-giây.
+  - **DuckDB & Quản trị RAM**: DuckDB bị giới hạn cấu hình chỉ được phép truy vấn tại tầng Gold (Data Marts/OBT). Kết quả kiểm thử thực tế (Benchmark trên môi trường SSD Samsung 980 Pro NVMe 4.0) cho thấy sức mạnh tối ưu I/O khủng khiếp của Single-Node:
+    - **Bare-metal EL (Disk-to-Disk thuần):** DuckDB cắm trực tiếp vào Postgres, kéo 6.8 triệu bản ghi và ghi xuống file Parquet chỉ mất **1.8 giây** (Vắt kiệt 100% băng thông ổ cứng, Zero-overhead).
+    - **Orchestrated ETL (Thực chiến):** Khi bọc qua bộ điều phối Airflow (chịu thêm thuế Network, Spin-up worker, và đẩy lên MinIO qua S3 API), toàn bộ luồng hoàn tất trong **9.6 giây**.
+    Với hiệu năng này, bài toán tràn RAM trên kiến trúc Single-Node được giải quyết triệt để, đồng thời tốc độ kết xuất báo cáo BI (Superset) đạt ngưỡng mili-giây. Hiệu năng thực tế khi Deploy sẽ phụ thuộc tuyến tính vào thông số IOPS của ổ cứng đích.
 
 ### 3. Mâm Orchestration: n8n kết hợp Airflow 3 (Dual-Engine)
 - **Quyết định**: Áp dụng mô hình điều phối kép (Dual-Engine Orchestration). Tách biệt rạch ròi hai vùng lãnh thổ: n8n đảm nhận Giao tiếp ngoại vi (External Integrations) và Airflow 3 đóng vai trò Điều phối nội bộ (Internal Orchestrator).
@@ -50,6 +53,20 @@ Dưới đây là các quyết định (Lý do đi chợ) giải thích chi ti�
   - **Data-Blind Text-to-SQL (Viết Code nhưng Bịt mắt)**: Mimir Bot VẪN ĐƯỢC CẤP QUYỀN tư duy, tự do viết câu lệnh SQL, tạo Template hoặc điền tham số (Parameters). **Tuy nhiên**, nó bị "bịt mắt" hoàn toàn khỏi dữ liệu thực. Não bộ của LLM chỉ được cung cấp Cấu trúc bảng (Schema) và Siêu dữ liệu (Metadata) để sinh ra luồng xử lý. Nó tuyệt đối không được cấp quyền `SELECT` để nhìn thấy dữ liệu thô.
   - **Deterministic Execution (Thực thi tất định)**: LLM đóng vai trò người "viết kịch bản" (Router/Template Generator). Còn người "diễn" (Thực thi SQL, áp dụng RLS, render kết quả) là hệ thống Engine phía sau (Superset/DuckDB). Điều này loại bỏ hoàn toàn rủi ro AI bịa số liệu (Hallucination) hoặc làm rò rỉ dữ liệu nhạy cảm.
 
+### 6. Chiến lược Ingestion (Trích xuất dữ liệu từ Nguồn)
+- **Quyết định**: Tuyệt đối không sử dụng Cụm Kafka/Debezium (True CDC) để giữ vững triết lý Single-Node. Thay vào đó, thiết kế hệ thống hỗ trợ linh hoạt 3 chiến lược "CDC con nhà nghèo". **Việc chọn Option nào sẽ KHÔNG bị đóng cứng (hardcoded), mà BẮT BUỘC phải dựa trên kết quả Đo đạc (Benchmark) thực tế trên hệ thống của từng khách hàng.**
+- **Lập luận (Ưu & Nhược điểm từng Option)**:
+  - **Option 1: Đánh Index cột `updated_at` & Query thẳng Master DB (Watermarking)**
+    - *Ưu điểm:* Cực kỳ dễ code. Airflow chỉ cần lưu mốc thời gian và bắn câu lệnh `SELECT ... WHERE updated_at > mốc_cũ`.
+    - *Nhược điểm:* **Index Write Penalty**. Ép DBA đánh index trên cột biến động cao sẽ làm tăng tải Ghi (I/O) của DB Prod, nguy cơ ngẽn cổ chai hệ thống của khách hàng. Phải xử lý rủi ro "Late Commit" (Dữ liệu bị sót do độ trễ transaction).
+  - **Option 2: Query Watermark vào Read-Replica DB**
+    - *Ưu điểm:* Vẫn giữ được sự đơn giản của SQL, nhưng chuyển hoàn toàn áp lực Read sang máy chủ dự phòng (Replica). Bảo vệ Master DB tuyệt đối khỏi các vụ sập nguồn do Full Table Scan.
+    - *Nhược điểm:* Khách hàng phải có tài chính để duy trì DB Replica. Dữ liệu kéo về Lakehouse có thể bị trễ thêm vài giây/phút do độ trễ đồng bộ (Replication Lag). DB nguồn vẫn phải gánh Write Penalty của Index.
+  - **Option 3: Postgres Logical Replication + Python (Zero-ETL / Zero-Index)**
+    - *Ưu điểm:* Đỉnh cao của Data Engineering. Bật `wal_level = logical` và dùng code Python trên Airflow hút trực tiếp các thay đổi (Insert/Update/Delete) từ Replication Slot. **Không cần đánh Index, Không table scan, Không tốn tải Update của Master DB**. Bắt được cả lệnh Hard Delete.
+    - *Nhược điểm:* Yêu cầu quyền Root/Admin của DB Nguồn. Rủi ro tràn ổ cứng DB Prod nếu Airflow chết quá lâu (Slot không được xả, WAL phình to). Code xử lý giải mã WAL phức tạp hơn SQL thông thường.
+- **Tiêu chuẩn Benchmark (Prerequisite):** Trước khi chốt phương án Ingestion cho một Client B2B, Team Data phải phối hợp với Backend để ước lượng **Tải thực tế lúc cao điểm (Peak Real-world TPS)** của hệ thống. Sau đó dùng công cụ `pgbench` giả lập mức tải thực tế này (VD: 400 TPS hoặc 5000 TPS tùy quy mô) nhằm đo lường sự sụt giảm hiệu năng (CPU, Write I/O) khi tạo Index hoặc mở WAL. Quyết định cuối cùng (Capacity Planning) sẽ dựa trên việc hệ thống thực tế có gánh nổi mức Overhead đó hay không, tuyệt đối không đuổi theo các con số lý thuyết viển vông.
+
 ## ⚖️ Hậu quả & Đánh đổi (Consequences & Trade-offs)
 *Trong kiến trúc hệ thống, không có viên đạn bạc (No Silver Bullet). Mua được "Hiệu năng" và "Sự tối giản" thì nền tảng phải chấp nhận trả giá bằng 5 nhược điểm chí mạng sau:*
 
@@ -72,3 +89,4 @@ Dưới đây là các quyết định (Lý do đi chợ) giải thích chi ti�
 5. **Khấu hao hiệu năng giao thức (Object Storage Overhead)**
    - *Mua:* Dùng chuẩn S3 API (MinIO) ngay trên máy Local để đảm bảo Code luôn ở trạng thái "Cloud-Ready", dễ dàng bốc lên AWS S3 mà không bị khóa chặt (Lock-in) vào ổ cứng vật lý.
    - *Trả:* Dù MinIO chạy tại Local, việc Polars/DuckDB đọc file phải đi qua giao thức HTTP/S3 API thay vì đọc thẳng từ đĩa (Local NVMe) sẽ gây hao phí CPU cho việc đóng/mở gói mạng (Serialization). Tốc độ I/O thực tế sẽ bị suy hao một khoản nhất định so với truy xuất File System thuần túy.
+
