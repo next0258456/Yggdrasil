@@ -31,6 +31,13 @@ Dưới đây là các quyết định (Lý do đi chợ) giải thích chi ti�
   - **n8n**: Đảm nhận vai trò "Bộ ngoại giao". Lắng nghe Webhook, gọi API, kết nối với Zalo/Telegram (AI Mimir Bot), cào dữ liệu Google Sheets cực kỳ nhanh chóng bằng tư duy Low-code.
   - **Airflow 3**: Đóng vai trò "Bộ nội vụ". Nó nhận tín hiệu từ n8n để kích hoạt 1 *Parameterized DAG* (cối xay thịt) duy nhất, phân bổ tài nguyên để chạy Polars/DuckDB khắt khe, tuân thủ nghiêm ngặt Hợp đồng dữ liệu (Data Contract).
 
+### 4. Mâm BI & Security Gateway: Apache Superset (Zero-Trust)
+- **Quyết định**: Sử dụng Apache Superset không chỉ làm công cụ vẽ biểu đồ (BI Dashboard) truyền thống, mà đóng vai trò là "Cửa khẩu dữ liệu bảo mật" (Security Gateway) duy nhất cho toàn bộ hệ thống, đặc biệt là phục vụ AI.
+- **Lập luận**:
+  - **Free API Backend & JWT**: Việc tự code một API Backend riêng (bằng FastAPI/NodeJS) để Bot chọc vào Lakehouse là lãng phí. Superset có sẵn REST API cực mạnh với cơ chế xác thực JWT. AI Bot (Mimir) chỉ cần cầm Token đến gọi API, hết hạn là mất quyền.
+  - **Row-Level Security (RLS)**: Bức tường thép bảo vệ dữ liệu. Khi AI xin dữ liệu, Superset áp đặt luật RLS để che giấu hoàn toàn dữ liệu nhạy cảm (Data-Blind AI). Bot chỉ thấy được những gì nó được phép thấy.
+  - **Semantic Layer hợp nhất**: Cả Con người (xem Dashboard) và AI (gọi API) đều đi qua lớp Semantic của Superset. Tránh tuyệt đối tình trạng "Người tính ra một số, Bot tính ra một số khác".
+
 ## Hậu quả (Consequences)
 - **Điểm tích cực**: Giảm 80% chi phí hạ tầng, loại bỏ hoàn toàn sự phức tạp của JVM/Cluster. Tốc độ phát triển (Developer Velocity) siêu tốc, thời gian query giảm xuống mức millisecond. Quản trị viên chỉ cần tập trung bảo trì 1 máy chủ vật lý mạnh mẽ.
 - **Điểm hạn chế**: Hệ thống bị giới hạn bởi sức mạnh vật lý của một Node duy nhất (Vertical Scaling). Nếu một ngày dữ liệu phình to lên mức nhiều Petabytes, phần Compute sẽ phải cấu trúc lại để scale ngang. Tuy nhiên, nhờ nguyên tắc **Decoupled Compute & Storage**, việc vứt bỏ Polars để thay bằng Engine phân tán trong tương lai là hoàn toàn khả thi và không gây mất mát dữ liệu.
