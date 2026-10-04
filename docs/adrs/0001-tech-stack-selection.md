@@ -53,20 +53,7 @@ Dưới đây là các quyết định (Lý do đi chợ) giải thích chi ti�
   - **Data-Blind Text-to-SQL (Viết Code nhưng Bịt mắt)**: Mimir Bot VẪN ĐƯỢC CẤP QUYỀN tư duy, tự do viết câu lệnh SQL, tạo Template hoặc điền tham số (Parameters). **Tuy nhiên**, nó bị "bịt mắt" hoàn toàn khỏi dữ liệu thực. Não bộ của LLM chỉ được cung cấp Cấu trúc bảng (Schema) và Siêu dữ liệu (Metadata) để sinh ra luồng xử lý. Nó tuyệt đối không được cấp quyền `SELECT` để nhìn thấy dữ liệu thô.
   - **Deterministic Execution (Thực thi tất định)**: LLM đóng vai trò người "viết kịch bản" (Router/Template Generator). Còn người "diễn" (Thực thi SQL, áp dụng RLS, render kết quả) là hệ thống Engine phía sau (Superset/DuckDB). Điều này loại bỏ hoàn toàn rủi ro AI bịa số liệu (Hallucination) hoặc làm rò rỉ dữ liệu nhạy cảm.
 
-### 6. Chiến lược Ingestion (Trích xuất dữ liệu từ Nguồn)
-- **Quyết định**: Tuyệt đối không sử dụng Cụm Kafka/Debezium (True CDC) để giữ vững triết lý Single-Node. Thay vào đó, thiết kế hệ thống hỗ trợ linh hoạt 3 chiến lược "CDC con nhà nghèo". **Việc chọn Option nào sẽ KHÔNG bị đóng cứng (hardcoded), mà BẮT BUỘC phải dựa trên kết quả Đo đạc (Benchmark) thực tế trên hệ thống của từng khách hàng.**
-- **Lập luận (Ưu & Nhược điểm từng Option)**:
-  - **Option 1: Đánh Index cột `updated_at` & Query thẳng Master DB (Watermarking)**
-    - *Ưu điểm:* Cực kỳ dễ code. Airflow chỉ cần lưu mốc thời gian và bắn câu lệnh `SELECT ... WHERE updated_at > mốc_cũ`.
-    - *Nhược điểm:* **Index Write Penalty**. Ép DBA đánh index trên cột biến động cao sẽ làm tăng tải Ghi (I/O) của DB Prod, nguy cơ ngẽn cổ chai hệ thống của khách hàng. Phải xử lý rủi ro "Late Commit" (Dữ liệu bị sót do độ trễ transaction).
-  - **Option 2: Query Watermark vào Read-Replica DB**
-    - *Ưu điểm:* Vẫn giữ được sự đơn giản của SQL, nhưng chuyển hoàn toàn áp lực Read sang máy chủ dự phòng (Replica). Bảo vệ Master DB tuyệt đối khỏi các vụ sập nguồn do Full Table Scan.
-    - *Nhược điểm:* Khách hàng phải có tài chính để duy trì DB Replica. Dữ liệu kéo về Lakehouse có thể bị trễ thêm vài giây/phút do độ trễ đồng bộ (Replication Lag). DB nguồn vẫn phải gánh Write Penalty của Index.
-  - **Option 3: Postgres Logical Replication + Python (Zero-ETL / Zero-Index)**
-    - *Ưu điểm:* Đỉnh cao của Data Engineering. Bật `wal_level = logical` và dùng code Python trên Airflow hút trực tiếp các thay đổi (Insert/Update/Delete) từ Replication Slot. **Không cần đánh Index, Không table scan, Không tốn tải Update của Master DB**. Bắt được cả lệnh Hard Delete.
-    - *Nhược điểm:* Yêu cầu quyền Root/Admin của DB Nguồn. Rủi ro tràn ổ cứng DB Prod nếu Airflow chết quá lâu (Slot không được xả, WAL phình to). Code xử lý giải mã WAL phức tạp hơn SQL thông thường.
-- **Tiêu chuẩn Benchmark (Prerequisite):** Trước khi chốt phương án Ingestion cho một Client B2B, Team Data phải phối hợp với Backend để ước lượng **Tải thực tế lúc cao điểm (Peak Real-world TPS)** của hệ thống. Sau đó dùng công cụ `pgbench` giả lập mức tải thực tế này (VD: 400 TPS hoặc 5000 TPS tùy quy mô) nhằm đo lường sự sụt giảm hiệu năng (CPU, Write I/O) khi tạo Index hoặc mở WAL. Quyết định cuối cùng (Capacity Planning) sẽ dựa trên việc hệ thống thực tế có gánh nổi mức Overhead đó hay không, tuyệt đối không đuổi theo các con số lý thuyết viển vông.
-
+#
 ## ⚖️ Hậu quả & Đánh đổi (Consequences & Trade-offs)
 *Trong kiến trúc hệ thống, không có viên đạn bạc (No Silver Bullet). Mua được "Hiệu năng" và "Sự tối giản" thì nền tảng phải chấp nhận trả giá bằng 5 nhược điểm chí mạng sau:*
 
