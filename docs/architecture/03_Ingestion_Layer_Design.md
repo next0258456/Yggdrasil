@@ -31,7 +31,11 @@ Dựa trên giới hạn Vật lý (Network Bandwidth) và dung lượng dữ li
   - Dùng CPU của Data Lake để chạy `FULL OUTER JOIN` hoặc `EXCEPT` giữa Snapshot hôm nay và hôm qua nhằm tự chắt lọc ra các dòng Insert, Update, Delete.
 - **Ưu điểm tối thượng:** 
   - **Zero-Touch:** Không cần động chạm bất kỳ cấu hình nào vào DB Nguồn (Không Index, không Replication Slot). Coi DB Nguồn như một nơi chứa data ngu ngốc.
-  - **Độ chính xác 100%:** Tuyệt đối không bao giờ bị rớt data do lệch múi giờ hay mất kết nối giữa chừng như các giải pháp Watermark.
+  - **Chính xác tại thời điểm chụp (Point-in-time Accuracy):** Khác với Watermark dễ sót data do lệch múi giờ, Full Outer Join đảm bảo chính xác 100% trạng thái dữ liệu tại đúng giây phút cào.
+  - **Tặng kèm Cold Backup:** File Parquet lưu ở Bronze vô tình trở thành một bản sao lưu (Backup) nguyên vẹn 1:1 của Database gốc, có thể dùng để cứu hộ (DR) khi DB gốc sập.
+- **⚠️ Nhược điểm chí mạng (Rủi ro RPO):**
+  - **Khoảng trống dữ liệu (Data Gap / RPO > 0):** Chế độ này bắt buộc phải chạy theo chu kỳ Cronjob (VD: 1 tiếng/lần). Nếu hệ thống gốc sập giữa 2 chu kỳ, toàn bộ giao dịch trong khoảng thời gian đó sẽ bị MẤT TRẮNG. 
+  - *Kết luận:* Chế độ này phù hợp nhất cho Analytics (chấp nhận độ trễ). Đối với các bảng dữ liệu lõi đòi hỏi Không mất mát dữ liệu (Zero Data Loss), bắt buộc phải chuyển sang **Chế độ 2 (`INCREMENTAL_CDC`)** với cơ chế quét liên tục.
 
 ### 🚩 Chế độ 2: `SYNC_MODE = 'INCREMENTAL_CDC'` (Chế độ Tiết kiệm Băng thông)
 - **Điều kiện kích hoạt:**
@@ -60,17 +64,13 @@ Dựa trên giới hạn Vật lý (Network Bandwidth) và dung lượng dữ li
 
 Khi hệ thống buộc phải bật cờ `INCREMENTAL_CDC`, việc chọn phương án nào dưới đây phụ thuộc vào kết quả đo đạc tải thực tế (Capacity Planning) của Database khách hàng:
 
-### Option A: Đánh Index cột `updated_at` & Query thẳng Master DB (Watermarking)
-- *Cách làm:* Airflow lưu lại mốc thời gian (Watermark) của lần chạy trước. Lần sau chạy câu lệnh `SELECT ... WHERE updated_at > mốc_cũ`.
-- *Ưu điểm:* Code cực kỳ dễ, quen thuộc với mọi DE.
-- *Nhược điểm:* **Index Write Penalty**. Ép DBA đánh index trên một cột biến động cao (updated_at) sẽ làm tăng tải Ghi (I/O) của DB Prod. Phải xử lý thủ công rủi ro "Late Commit" (Dữ liệu bị sót do độ trễ transaction).
+### Option A: Query Watermark vào Read-Replica DB (An toàn cho Prod)
+- *Cách làm:* Airflow lưu lại mốc thời gian (Watermark) của lần chạy trước. Lần sau chạy câu lệnh `SELECT ... WHERE updated_at > mốc_cũ`. Tuyệt đối không chọc vào Master DB, mà phải trỏ chuỗi kết nối sang con máy chủ phụ (Read-Replica).
+- *Ưu điểm:* Code cực kỳ dễ, quen thuộc với mọi DE. Bảo vệ Master DB tuyệt đối khỏi các rủi ro sập nguồn do Full Table Scan hoặc kẹt Lock.
+- *Nhược điểm:* Khách hàng phải tốn tiền duy trì DB Replica. Dữ liệu kéo về Lakehouse có thể bị trễ thêm do `Replication Lag`. Vẫn tồn tại rủi ro "Khoảng trống dữ liệu" (RPO) của Cronjob.
 
-### Option B: Query Watermark vào Read-Replica DB
-- *Cách làm:* Giống Option A nhưng trỏ chuỗi kết nối sang con máy chủ phụ (Replica).
-- *Ưu điểm:* Vẫn giữ được sự đơn giản của SQL. Bảo vệ Master DB tuyệt đối khỏi các rủi ro sập do Full Table Scan.
-- *Nhược điểm:* Khách hàng phải tốn tiền duy trì DB Replica. Dữ liệu kéo về Lakehouse có thể bị trễ do `Replication Lag`. DB Master Nguồn vẫn phải gánh Write Penalty của cái Index `updated_at`.
-
-### Option C: Postgres Logical Replication (Zero-Index CDC)
-- *Cách làm:* Đỉnh cao của Data Engineering. Bật `wal_level = logical` trên DB Nguồn và dùng Python hút trực tiếp các sự kiện (Insert/Update/Delete) từ Replication Slot.
-- *Ưu điểm:* **Không cần đánh Index, không Table Scan, không tốn tải Update của Master DB**. Bắt được cả lệnh Hard Delete. 
-- *Nhược điểm:* Yêu cầu quyền Root/Admin của DB Nguồn. Rủi ro tràn ổ cứng DB Prod nếu luồng Airflow chết quá lâu (Slot không được xả, WAL phình to). Code xử lý giải mã WAL phức tạp hơn SQL thông thường.
+### Option B: Log-based CDC (Postgres WAL / MySQL Binlog) - Đỉnh cao Zero-Data-Loss
+- *Cách làm:* Bật tính năng ghi log mức độ logic của Database Nguồn (Với Postgres là `wal_level = logical`, với MySQL là `Binlog Row-based`). Sau đó dùng Airflow/Python kết nối như một Replica Node để hứng trực tiếp luồng sự kiện (Insert/Update/Delete) theo thời gian thực.
+- *Ưu điểm:* **Giải quyết triệt để rủi ro RPO (Mất dữ liệu) của Cronjob**. Không cần đánh Index, không Table Scan, không tốn tải Update của Master DB. Bắt được cả lệnh Hard Delete. 
+- *Nhược điểm:* Yêu cầu quyền Root/Admin/Replication của DB Nguồn. Rủi ro tràn ổ cứng DB Prod nếu luồng Airflow chết quá lâu (Slot/Binlog không được xả, rác phình to). Code xử lý giải mã Log phức tạp hơn SQL thông thường.
+- *Lưu ý với hệ thống nhỏ (như SQLite):* Không áp dụng cơ chế này. Nếu khách hàng dùng SQLite làm Prod, mặc định Data size cực nhỏ, chỉ cần dùng Chế độ 1 (`FULL_SNAPSHOT_DIFF`) là đủ.
