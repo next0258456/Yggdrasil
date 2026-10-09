@@ -78,3 +78,4 @@ Toàn bộ quá trình diễn ra hoàn toàn tự động, chặn đứng rủi 
 - **Bảo mật tuyệt đối (Zero Trust):** Câu lệnh SQL do AI sinh ra KHÔNG ĐƯỢC CHẠY TRỰC TIẾP vào CSDL. n8n sẽ đẩy câu lệnh SQL này qua cổng API **SQL Lab của Superset**, đính kèm theo JWT Token của chính người dùng đó. Superset sẽ tự động kẹp luật Row-Level Security (RLS) vào trước khi giao cho DuckDB tính toán. Nhờ vậy, AI không bao giờ vượt quyền được danh tính của người dùng thực.
 
 
+
