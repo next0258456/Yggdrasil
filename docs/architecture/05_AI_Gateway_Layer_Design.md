@@ -36,17 +36,27 @@ Hệ thống sử dụng cơ chế "Out-of-band Authentication" (Xác thực ngo
 5. **Trao đổi Token (Token Exchange):** Form submit dữ liệu qua HTTPS POST về một Webhook xử lý của n8n.
    - n8n cầm Username/Password gõ cửa API \/api/v1/security/login\ của Superset.
    - Superset trả về \Access Token\ và \Refresh Token\.
-   - n8n **hủy bỏ Password ngay lập tức**, chỉ lưu trữ Token và ánh xạ nó với \Zalo_User_ID\ vào Database (Google Sheets/Redis).
+   - n8n **hủy bỏ Password ngay lập tức**, chỉ lưu trữ Token và ánh xạ nó với \Zalo_User_ID\ vào Database bảo mật (Postgres hoặc Redis).
 6. **Đóng Webview:** n8n trả về giao diện HTML thông báo thành công. Người dùng tắt trình duyệt và quay lại chat bình thường.
 
-## 4. Luồng Cấp Phát Tài Khoản Tự Động (IAM Auto-Provisioning)
-Để n8n và Superset đồng bộ danh tính, hệ thống sử dụng một Master IAM File (Google Sheet).
-- Khi nhân sự (HR) thêm một nhân viên mới vào Google Sheet, n8n định kỳ (Polling) phát hiện bản ghi mới.
-- n8n sinh ra một Mật khẩu ngẫu nhiên có độ khó cao.
-- n8n gọi API Superset tạo User mới với Role tương ứng (dựa trên phòng ban) và gán Mật khẩu ngẫu nhiên này.
-- Nhân viên nhận được email thông báo tài khoản và link kết nối Zalo.
-- Mật khẩu này người dùng không thể tự đổi trên giao diện Web của Superset (Khóa chức năng User Profile), đảm bảo tính nhất quán của hệ thống phân quyền tập trung.
+## 4. Luồng Cấp Phát Tài Khoản (IAM Provisioning) & Cơ Chế Kill Switch
 
+Phân quyền tập trung và khả năng thu hồi quyền truy cập khẩn cấp là cốt lõi của Zero Trust.
+
+### 4.1. Cấp Phát Tài Khoản (Tuyệt đối không lưu Password ở Google Sheet)
+Hệ thống sử dụng một Master IAM (Google Sheet hoặc HR System) CHỈ ĐỂ quản lý định danh nhân sự (Ví dụ: Số điện thoại -> Phòng ban).
+- Khi có nhân sự mới, n8n phát hiện bản ghi mới.
+- n8n tự động sinh một mật khẩu ngẫu nhiên trên RAM (In-memory).
+- n8n gọi API Superset tạo User mới và truyền mật khẩu này vào.
+- n8n bắn thẳng mật khẩu này qua Zalo/Email cho nhân viên dưới dạng tin nhắn **One-Time (Dùng 1 lần để login qua Webview)**.
+- **Ràng buộc Sinh tử:** Ngay sau khi bắn tin nhắn, n8n TIÊU HỦY mật khẩu khỏi RAM. Mật khẩu không bao giờ được ghi xuống bất kỳ Database hay Google Sheet nào. Bản đồ ánh xạ giữa Zalo_User_ID và Superset_Token sẽ được n8n lưu vào **Redis hoặc Postgres**, nghiêm cấm lưu trữ Token/Mật khẩu trên Google Sheet (vì nguy cơ rò rỉ bảo mật nội bộ).
+
+### 4.2. Cơ chế Kill Switch (Khóa Khẩn Cấp)
+Để đối phó với tình huống nhân viên nghỉ việc hoặc làm mất điện thoại, hệ thống có một công tắc tử thần (Kill Switch):
+1. **Kích hoạt:** HR chuyển trạng thái nhân sự thành Inactive trên Master IAM.
+2. **Cắt cầu Mimir:** n8n ngay lập tức vô hiệu hóa Zalo_User_ID trong danh sách trắng (Whitelist). Mimir Bot từ chối mọi tin nhắn từ thiết bị này.
+3. **Cắt cầu Superset:** n8n gọi API Superset đổi trạng thái is_active = False của tài khoản đó, đồng thời xóa sạch Token đang lưu trong Redis.
+Toàn bộ quá trình cắt quyền diễn ra dưới 1 phút, đảm bảo kẻ xấu cầm điện thoại cũng không thể tương tác với Data Platform.
 ## 5. Kiến Trúc "Hybrid AI" Trong Xử Lý Truy Vấn (Query Orchestration)
 Để giải quyết bài toán mâu thuẫn giữa "Độ chính xác tuyệt đối" (BI) và "Khả năng linh hoạt" (AI), Mimir hoạt động theo cơ chế **Lai (Hybrid)**. Hệ thống không ép LLM phải chọn một phương pháp duy nhất mà kết hợp cả hai:
 
@@ -59,3 +69,4 @@ Hệ thống sử dụng cơ chế "Out-of-band Authentication" (Xác thực ngo
 - **Kích hoạt khi:** Người dùng hỏi những câu mang tính chất khám phá, ngẫu hứng (Ad-hoc) mà đội Data chưa kịp xây dựng sẵn Metric trên Superset.
 - **Hoạt động:** Mimir sẽ chọc vào Tầng 4 (Obsidian) để lôi ra các định nghĩa, cạm bẫy dữ liệu (Data Traps) và lược đồ bảng (OBT Layer Gold). Dựa vào ngữ cảnh này, LLM tự động viết ra câu lệnh truy vấn SQL thô.
 - **Bảo mật tuyệt đối (Zero Trust):** Câu lệnh SQL do AI sinh ra KHÔNG ĐƯỢC CHẠY TRỰC TIẾP vào CSDL. n8n sẽ đẩy câu lệnh SQL này qua cổng API **SQL Lab của Superset**, đính kèm theo JWT Token của chính người dùng đó. Superset sẽ tự động kẹp luật Row-Level Security (RLS) vào trước khi giao cho DuckDB tính toán. Nhờ vậy, AI không bao giờ vượt quyền được danh tính của người dùng thực.
+
