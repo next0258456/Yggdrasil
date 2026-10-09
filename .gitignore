@@ -1,32 +1,24 @@
-# Environments
+﻿# Local environments
 .env
-.venv
+.venv/
 env/
 venv/
 ENV/
+env.bak/
+venv.bak/
 
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.pytest_cache/
-.coverage
-htmlcov/
+# Scratch & temp files
+scratch/
+temp/
+*.log
+*.tmp
+*.bak
 
-# Airflow
-airflow.cfg
-airflow.db
-logs/
-
-# Y7L Secrets & Configs
-98_Credentials/
-*.pem
-*.key
-
-# Restricted File Types
-*.json
-
-# Mac/Windows
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
