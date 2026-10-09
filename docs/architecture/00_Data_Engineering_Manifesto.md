@@ -13,7 +13,7 @@
 ## 2. Configuration-Driven & Data Contracts (Cấu hình hóa & Hợp đồng dữ liệu)
 *Data Engineering ở quy mô lớn là Software Engineering. Giảm thiểu mã lặp và siết chặt kỷ luật.*
 
-- **Tách rời Config và Code:** Logic chuyển đổi (Transformations) nằm trong mã nguồn (Polars), nhưng Luồng chạy (Pipeline Routing) nằm trong cấu hình định tuyến (n8n/Google Sheets). Sử dụng 1 Parameterized DAG duy nhất trên Airflow để xử lý.
+- **Tách rời Config và Code:** Logic chuyển đổi (Transformations) được chia làm 2 chốt chặn (Gates): **Gate 1 (Làm sạch Bronze -> Silver)** xử lý bằng Python/Polars để chặn dữ liệu rác, và **Gate 2 (Nghiệp vụ Silver -> Gold)** xử lý bằng dbt/DuckDB để quản lý DAG và Data Contracts, nhưng Luồng chạy (Pipeline Routing) nằm trong cấu hình định tuyến (n8n/Google Sheets). Sử dụng 1 Parameterized DAG duy nhất trên Airflow để xử lý.
 - **Hợp đồng dữ liệu (Data Contract):** Chính các file cấu hình này sẽ đóng vai trò là Hợp đồng dữ liệu (Data Contract). Dữ liệu từ nguồn (Upstream) bắt buộc phải thõa mãn Schema và các ràng buộc (Constraints) khai báo trong Config trước khi được nạp vào Iceberg. Nguyên tắc "Garbage in, Garbage out" phải bị chặn đứng ngay từ vòng gửi xe. **Đồng thời, Hợp đồng phải gắn liền với Data Ownership: Nếu có lỗi xảy ra, hệ thống phải truy vết và chỉ đích danh được Team/Cá nhân (Upstream) vi phạm hợp đồng để quy trách nhiệm xử lý.**
 
 ## 3. Data-Blind AI & Zero Trust (Trí tuệ nhân tạo mù dữ liệu)

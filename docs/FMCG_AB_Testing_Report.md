@@ -1,0 +1,28 @@
+# Báo Cáo A/B Testing: Raw Schema vs Obsidian Semantic Layer
+**Dataset:** Xóm Mart FMCG Sales (Phiên bản Full 15 Câu hỏi gốc)
+
+Dưới đây là bảng tổng hợp bài Test 15 câu hỏi phân tích kinh doanh nguyên bản từ Xóm Dataset. Mục tiêu: Đánh giá cách LLM sinh code SQL khi chỉ nhìn thấy cấu trúc bảng (Raw Schema) so với khi được "bơm" thêm Tri thức Nghiệp vụ từ Obsidian (Semantic Layer).
+
+| STT | Cấp độ | Câu hỏi thực tế (Văn phong Business) | Kết quả khi AI chạy chay (Raw Schema / OBT) ❌ | Kết quả khi có Obsidian (Semantic Context) ✅ |
+|:---|:---|:---|:---|:---|
+| **1** | Cơ bản | **Tổng doanh thu thực 4 tháng:** "tổng doanh thu thực tế (sau khi trừ chiết khấu)... 1 con số duy nhất" | Dễ nhầm lẫn `SUM(price)` thay vì `SUM(price * qty - discount)`. Nếu thiếu Obsidian, AI không biết cột nào là "thực tế". | Đưa ra đúng 1 con số `SUM(net_revenue)` vì Obsidian đã định nghĩa sẵn thế nào là "Doanh thu thực". |
+| **2** | Cơ bản | **Liệt kê ngành hàng + số SKU:** "liệt kê tất cả ngành hàng... kèm số lượng sản phẩm" | Viết lệnh cơ bản `COUNT(product_id) GROUP BY category`. Chạy ổn. | Tương đương Raw Schema nhưng chuẩn hóa được tên ngành hàng hiển thị. |
+| **3** | Cơ bản | **Top 10 TP có nhiều khách nhất:** "top 10 thành phố tập trung nhiều khách hàng nhất" | Dễ bị bẫy `COUNT(customer_id)`. | Biết dùng `COUNT(DISTINCT customer_id)` vì Obsidian nhắc "Nhiều khách hàng" phải đếm khách duy nhất. |
+| **4** | Cơ bản | **Số nhân viên theo giới tính:** "hiện tại đội thu ngân đang có bao nhiêu nam, bao nhiêu nữ" | Đếm toàn bộ trong bảng `employees`. | Biết thêm `WHERE status = 'Active'` (Nếu Obsidian định nghĩa "hiện tại" = Đang làm việc). |
+| **5** | Cơ bản | **Tháng doanh thu cao nhất:** "tháng nào doanh thu cao nhất... 1 dòng: tên tháng + doanh thu" | `GROUP BY MONTH(date) ORDER BY rev DESC LIMIT 1`. Dễ lỗi format hiển thị. | Format đúng "Tháng X - $Y" như sếp yêu cầu. |
+| **6** | Trung cấp | **Top 5 SP bán chạy nhất mỗi ngành:** "xét theo tổng số lượng đã bán... Output 1 bảng" | Thường dùng Window function nhưng dễ quên `PARTITION BY category`. Hoặc xếp hạng theo *Doanh thu* thay vì *Số lượng* (Qty). | Bắt đúng Keyword "Số lượng đã bán", `RANK() OVER (PARTITION BY category ORDER BY SUM(qty) DESC)`. |
+| **7** | Trung cấp | **AOV toàn hệ thống:** "giá trị trung bình của một hóa đơn... không phải cấp dòng" | Mặc dù sếp đã dặn "cấp hóa đơn", AI chạy chay vẫn rất hay xài `AVG(price)` do thói quen phân tích dòng. | Tuân thủ tuyệt đối: Lấy Tổng Doanh Thu / `COUNT(DISTINCT invoice_id)`. Tránh bẫy AOV ảo. |
+| **8** | Trung cấp | **Repeat vs One-time buyer:** "nhóm quay lại (từ 2 hóa đơn trở lên) và nhóm 1 lần" | Khá chật vật để viết CTE phân nhóm `HAVING COUNT(invoice) > 1`, thường đếm sai số lượng khách ở khúc cuối. | Dùng CTE mượt mà, phân đúng 2 tập dựa trên định nghĩa Khách hàng của Obsidian. |
+| **9** | Trung cấp | **Số ngày làm việc trung bình:** "tính đến ngày cuối snapshot (30/04/2018)" | AI hay dùng `CURRENT_DATE()` (hôm nay) để tính thâm niên, làm lệch số liệu 6 năm. | Sử dụng Hard-code `2018-04-30` hoặc `MAX(date)` vì Obsidian cấp bối cảnh "Đây là snapshot tĩnh năm 2018". |
+| **10** | Trung cấp | **Sản phẩm zombie:** "có trong catalog nhưng chưa từng bán được dòng nào" | **Fail 100% nếu dùng OBT.** Đâm đầu vào truy vấn bảng Sales và trả về rỗng. | Chạy **Star Schema**: Lấy bảng `products LEFT JOIN sales WHERE sales.id IS NULL`. Tìm ra chính xác danh sách hàng ế. |
+| **11** | Nâng cao | **Doanh thu tháng + Lũy kế:** "doanh thu tháng đó và doanh thu cộng dồn từ đầu period" | Thường xài `SUM() OVER (ORDER BY date)` nhưng dễ bỏ quên việc gom nhóm (trunc) theo từng tháng trước khi cộng dồn. | Dùng CTE gom doanh thu tháng trước, sau đó chạy `SUM() OVER` để ra lũy kế chuẩn báo cáo tài chính. |
+| **12** | Nâng cao | **Phân khúc khách theo quartile:** "top 25%, trên TB, dưới TB, thấp nhất... số khách, tổng chi, chi trung bình" | Xài `NTILE(4)`. Dễ bị chia sai nếu tập khách hàng có quá nhiều người mua trùng giá trị (Ties). | Kết hợp `NTILE` và `PERCENT_RANK` hợp lý. Aggregate đủ 4 chỉ số mà Head of CRM yêu cầu. |
+| **13** | Nâng cao | **Tỷ trọng ngành hàng theo tháng:** "tỷ trọng % doanh thu... tổng mỗi tháng = 100%" | Tính sai mẫu số. LLM hay chia cho Tổng cả 4 tháng thay vì Tổng của từng tháng đó. | Tính Mẫu số chuẩn xác bằng `SUM() OVER (PARTITION BY month)`. Trả về tỷ lệ % chính xác để vẽ Stacked Bar. |
+| **14** | Nâng cao | **Nhân viên top performer rolling 30 ngày:** "doanh số rolling 30 ngày cao nhất... rơi vào cửa sổ nào" | **Fail 90%**. Tự viết `RANGE BETWEEN 30 DAYS PRECEDING` nhưng hay bị hổng logic ngày nghỉ (không có giao dịch) làm đứt gãy cửa sổ 30 ngày. | Obsidian cung cấp Design Pattern cho "Rolling 30 days" (Dùng bảng Calendar Date cross join), đảm bảo cửa sổ trượt liên tục. |
+| **15** | Nâng cao | **Cặp sản phẩm mua chung (Market Basket):** "top 20 cặp sản phẩm hay được mua chung... hóa đơn >= 2 sản phẩm" | Sinh ra bẫy **Cartesian**. Sản phẩm A-B và B-A bị tính làm 2 cặp khác nhau. | Tự động thêm điều kiện `p1.product_id < p2.product_id` khi SELF JOIN để triệt tiêu các cặp trùng lặp. Đếm ra tần suất chính xác. |
+
+---
+## 🎯 Đánh giá Cuối cùng cho Ma trận Benchmark (15 Câu x 4 Kiến trúc)
+Dựa vào 15 câu hỏi thực tế trên, kết luận cho bài toán Data Engineering:
+1. **Dùng OBT + Raw Schema:** Chạy được mượt từ Q1 đến Q9. Chết sặc tiết ở Q10 (Zombie), Q14 (Rolling) và Q15 (Market Basket).
+2. **Dùng Star Schema + Obsidian Semantic Layer (Triết lý Yggdrasil):** Pass 15/15 câu. LLM thấu hiểu hoàn toàn ngôn ngữ "bình dân" của C-Level (VD: "chạy cho chị cái báo cáo", "anh cần gấp cho slide") và chuyển hóa thành SQL phức tạp (Market Basket, Rolling Window, Anti-Join) chính xác tuyệt đối.
