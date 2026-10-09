@@ -57,13 +57,20 @@ Khác với các hệ thống truyền thống, Yggdrasil sử dụng n8n làm C
 5. **Ràng buộc Bảo mật:** n8n lưu bản đồ ánh xạ Zalo_User_ID <-> JWT Token vào Database bảo mật (Postgres/Redis). Ngay sau đó, n8n **hủy bỏ Password**, hoàn toàn không lưu trữ Password của người dùng.
 6. Kể từ các lần chat sau, Mimir Bot chỉ dùng Zalo_User_ID để tra cứu Token và lấy dữ liệu, người dùng không bao giờ phải đăng nhập lại.
 
-### 4.3. Cơ Chế Kill Switch (Khóa Khẩn Cấp)
-Khi nhân viên nghỉ việc hoặc lộ thiết bị, hệ thống cần một công tắc cắt quyền (Kill Switch) lập tức:
-1. **Kích hoạt:** HR chuyển trạng thái nhân viên thành Inactive trên Master IAM (Google Sheet).
-2. **Cắt quyền:** n8n phát hiện trạng thái Inactive, thực hiện 2 hành động song song:
-   - **Xóa Token:** Chui vào Redis/Postgres xóa sạch map Zalo_User_ID <-> JWT Token. Thiết bị Zalo đó lập tức bị mù, không thể gọi Data.
-   - **Khóa Superset:** Gọi API Superset chuyển is_active = False để vô hiệu hóa hoàn toàn tài khoản gốc.
-Toàn bộ quá trình diễn ra hoàn toàn tự động, chặn đứng rủi ro rò rỉ dữ liệu qua thiết bị di động.
+### 4.3. Cơ Chế Kill Switch (2 Cấp Độ)
+Để xử lý linh hoạt các tình huống rủi ro mà không làm tăng gánh nặng vận hành, hệ thống chia công tắc tử thần thành 2 cấp độ, được điều khiển trực tiếp bằng giao diện Master IAM (Google Sheet):
+
+1. **Cấp 1: Thu hồi phiên (Sự cố mất điện thoại / Đăng nhập máy lạ)**
+   - **Kích hoạt:** HR hoặc IT chỉ cần tích vào ô (Checkbox) Revoke Session bên cạnh tên nhân viên trên Sheet.
+   - **Xử lý:** n8n lập tức truy cập Database xóa sạch ánh xạ Zalo_User_ID <-> JWT Token.
+   - **Kết quả:** Kẻ gian cầm máy cũ sẽ bị chặn đứng vì mất Token. Khi nhân viên mua thiết bị mới, chỉ cần mở Zalo và đăng nhập lại bằng User/Password cũ qua Webview. Tài khoản Superset gốc vẫn an toàn và không bị gián đoạn.
+
+2. **Cấp 2: Cắt đứt hoàn toàn (Nhân sự nghỉ việc / Sa thải)**
+   - **Kích hoạt:** HR đổi trạng thái nhân sự thành Inactive trên cột Trạng thái của Sheet.
+   - **Xử lý kép:** n8n phát hiện trạng thái Inactive sẽ thực hiện đồng thời:
+     + Xóa Token trong Database (Ngắt quyền Zalo).
+     + Gọi API Superset chuyển is_active = False (Khóa vĩnh viễn tài khoản gốc).
+   - **Kết quả:** Triệt tiêu hoàn toàn mọi quyền truy cập vào hệ thống Data Platform dưới 1 phút.
 ## 5. Kiến Trúc "Hybrid AI" Trong Xử Lý Truy Vấn (Query Orchestration)
 Để giải quyết bài toán mâu thuẫn giữa "Độ chính xác tuyệt đối" (BI) và "Khả năng linh hoạt" (AI), Mimir hoạt động theo cơ chế **Lai (Hybrid)**. Hệ thống không ép LLM phải chọn một phương pháp duy nhất mà kết hợp cả hai:
 
