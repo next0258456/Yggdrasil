@@ -49,7 +49,7 @@ Khác với các hệ thống truyền thống, Yggdrasil sử dụng n8n làm C
 3. **Gửi thông tin:** n8n gửi Email thông báo tài khoản và mật khẩu khởi tạo cho nhân viên. (Google Sheet tuyệt đối KHÔNG lưu mật khẩu này).
 
 ### 4.2. Luồng Định Danh Webview (Binding Zalo ID & Superset)
-Đây là bước diễn ra **1 lần duy nhất** để móc nối định danh mạng xã hội (Zalo) với hệ thống nội bộ (Superset):
+Đây là luồng xác thực định kỳ (diễn ra mỗi khi Token 10 tiếng hết hạn hoặc đổi thiết bị) để móc nối an toàn định danh mạng xã hội (Zalo) với hệ thống nội bộ (Superset):
 1. Nhân viên mở Mimir Bot trên Zalo, bấm "Đăng nhập". Zalo mở ra một màn hình Webview chứa Form đăng nhập.
 2. Nhân viên nhập User/Password (lấy từ Email) vào Form.
 3. Webview gửi gói tin gồm [User, Password, Zalo_User_ID] về Webhook của n8n.
