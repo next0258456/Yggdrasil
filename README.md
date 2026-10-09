@@ -21,19 +21,17 @@ Yggdrasil v0.1 là nền tảng Data Lakehouse được thiết kế tối giả
 3. **Data-Blind AI (Zero Leakage)**: AI Agent chỉ có quyền đọc siêu dữ liệu (Metadata/Schema) từ Obsidian để phân tích ngữ cảnh. Tuyệt đối không được cấp quyền đọc dữ liệu thô. Mọi truy xuất dữ liệu thực tế phải thông qua cổng bảo mật của Superset.
 4. **Single-Node & Data Contracts**: Tối ưu hóa trên kiến trúc Vertical Scaling với 2 chốt chặn: Sử dụng Python/Polars (Gate 1) để lấp bẫy lỗi và dọn rác từ Bronze lên Silver thông qua Dead Letter Queue (DLQ), và dbt-duckdb (Gate 2) để thực thi Data Contracts và DAG Dependency từ Silver lên Gold.
 
-## 📦 Cấu trúc dự án (Project Structure)
+## 📦 Cấu trúc dự án hiện tại (Project Structure)
+
+Kho lưu trữ này hiện tại đang đóng vai trò là **Bản thiết kế cốt lõi (Architecture & Blueprint Repository)**. Các thư mục mã nguồn thực tế (như dbt, Airflow, Polars) sẽ được khởi tạo trong giai đoạn Triển khai (Implementation).
 
 `	ext
 Yggdrasil/
-├── dags/          # Airflow Parameterized DAGs (Internal Orchestrator)
-├── dbt_models/    # Mã nguồn dbt (Gate 2 - Silver to Gold Modeling)
-├── n8n/           # Workflows JSON của n8n (External Integrations)
-├── scripts/       # Polars ETL & Dead Letter Queue handlers (Gate 1)
-├── docs/          # Thiết kế kỹ thuật & ADR (Export từ Obsidian)
-│   ├── adrs/      # Architecture Decision Records
-│   ├── guides/    # Hướng dẫn thực chiến & Lập luận kỹ thuật (PoC/Benchmarks)
-├── .agents/       # Tiêu chuẩn và bộ kỹ năng Agentic Software Engineering
-└── README.md
+├── docs/                 # Tài liệu cốt lõi (Export từ Obsidian)
+│   ├── architecture/     # Thiết kế chi tiết các tầng (Tầng 1 -> Tầng 5)
+│   ├── adrs/             # Architecture Decision Records (Lưu vết quyết định)
+│   └── guides/           # Hướng dẫn thực chiến & Lập luận kỹ thuật (PoC/Benchmarks)
+└── README.md             # Tuyên ngôn và Tổng quan kiến trúc
 `
 
 ---
