@@ -39,24 +39,31 @@ Hệ thống sử dụng cơ chế "Out-of-band Authentication" (Xác thực ngo
    - n8n **hủy bỏ Password ngay lập tức**, chỉ lưu trữ Token và ánh xạ nó với \Zalo_User_ID\ vào Database bảo mật (Postgres hoặc Redis).
 6. **Đóng Webview:** n8n trả về giao diện HTML thông báo thành công. Người dùng tắt trình duyệt và quay lại chat bình thường.
 
-## 4. Luồng Cấp Phát Tài Khoản (IAM Provisioning) & Cơ Chế Kill Switch
+## 4. Luồng Cấp Phát Tài Khoản & Cơ Chế Kill Switch
 
-Phân quyền tập trung và khả năng thu hồi quyền truy cập khẩn cấp là cốt lõi của Zero Trust.
+Khác với các hệ thống truyền thống, Yggdrasil sử dụng n8n làm Cầu nối Định danh (Identity Broker) giữa Zalo và Superset.
 
-### 4.1. Cấp Phát Tài Khoản (Tuyệt đối không lưu Password ở Google Sheet)
-Hệ thống sử dụng một Master IAM (Google Sheet hoặc HR System) CHỈ ĐỂ quản lý định danh nhân sự (Ví dụ: Số điện thoại -> Phòng ban).
-- Khi có nhân sự mới, n8n phát hiện bản ghi mới.
-- n8n tự động sinh một mật khẩu ngẫu nhiên trên RAM (In-memory).
-- n8n gọi API Superset tạo User mới và truyền mật khẩu này vào.
-- n8n bắn thẳng mật khẩu này qua Zalo/Email cho nhân viên dưới dạng tin nhắn **One-Time (Dùng 1 lần để login qua Webview)**.
-- **Ràng buộc Sinh tử:** Ngay sau khi bắn tin nhắn, n8n TIÊU HỦY mật khẩu khỏi RAM. Mật khẩu không bao giờ được ghi xuống bất kỳ Database hay Google Sheet nào. Bản đồ ánh xạ giữa Zalo_User_ID và Superset_Token sẽ được n8n lưu vào **Redis hoặc Postgres**, nghiêm cấm lưu trữ Token/Mật khẩu trên Google Sheet (vì nguy cơ rò rỉ bảo mật nội bộ).
+### 4.1. Luồng Cấp Phát Tài Khoản (Provisioning)
+1. **Khởi tạo:** Nhân sự (HR) nhập thông tin nhân viên mới (Email, Phòng ban) vào Master IAM (Google Sheet).
+2. **Tạo tài khoản:** n8n định kỳ (Polling) phát hiện bản ghi mới, gọi API Superset để tạo tài khoản (User) tương ứng với Role của phòng ban.
+3. **Gửi thông tin:** n8n gửi Email thông báo tài khoản và mật khẩu khởi tạo cho nhân viên. (Google Sheet tuyệt đối KHÔNG lưu mật khẩu này).
 
-### 4.2. Cơ chế Kill Switch (Khóa Khẩn Cấp)
-Để đối phó với tình huống nhân viên nghỉ việc hoặc làm mất điện thoại, hệ thống có một công tắc tử thần (Kill Switch):
-1. **Kích hoạt:** HR chuyển trạng thái nhân sự thành Inactive trên Master IAM.
-2. **Cắt cầu Mimir:** n8n ngay lập tức vô hiệu hóa Zalo_User_ID trong danh sách trắng (Whitelist). Mimir Bot từ chối mọi tin nhắn từ thiết bị này.
-3. **Cắt cầu Superset:** n8n gọi API Superset đổi trạng thái is_active = False của tài khoản đó, đồng thời xóa sạch Token đang lưu trong Redis.
-Toàn bộ quá trình cắt quyền diễn ra dưới 1 phút, đảm bảo kẻ xấu cầm điện thoại cũng không thể tương tác với Data Platform.
+### 4.2. Luồng Định Danh Webview (Binding Zalo ID & Superset)
+Đây là bước diễn ra **1 lần duy nhất** để móc nối định danh mạng xã hội (Zalo) với hệ thống nội bộ (Superset):
+1. Nhân viên mở Mimir Bot trên Zalo, bấm "Đăng nhập". Zalo mở ra một màn hình Webview chứa Form đăng nhập.
+2. Nhân viên nhập User/Password (lấy từ Email) vào Form.
+3. Webview gửi gói tin gồm [User, Password, Zalo_User_ID] về Webhook của n8n.
+4. n8n cầm User/Password đi gõ cửa API của Superset và nhận về JWT Token (Access/Refresh Token).
+5. **Ràng buộc Bảo mật:** n8n lưu bản đồ ánh xạ Zalo_User_ID <-> JWT Token vào Database bảo mật (Postgres/Redis). Ngay sau đó, n8n **hủy bỏ Password**, hoàn toàn không lưu trữ Password của người dùng.
+6. Kể từ các lần chat sau, Mimir Bot chỉ dùng Zalo_User_ID để tra cứu Token và lấy dữ liệu, người dùng không bao giờ phải đăng nhập lại.
+
+### 4.3. Cơ Chế Kill Switch (Khóa Khẩn Cấp)
+Khi nhân viên nghỉ việc hoặc lộ thiết bị, hệ thống cần một công tắc cắt quyền (Kill Switch) lập tức:
+1. **Kích hoạt:** HR chuyển trạng thái nhân viên thành Inactive trên Master IAM (Google Sheet).
+2. **Cắt quyền:** n8n phát hiện trạng thái Inactive, thực hiện 2 hành động song song:
+   - **Xóa Token:** Chui vào Redis/Postgres xóa sạch map Zalo_User_ID <-> JWT Token. Thiết bị Zalo đó lập tức bị mù, không thể gọi Data.
+   - **Khóa Superset:** Gọi API Superset chuyển is_active = False để vô hiệu hóa hoàn toàn tài khoản gốc.
+Toàn bộ quá trình diễn ra hoàn toàn tự động, chặn đứng rủi ro rò rỉ dữ liệu qua thiết bị di động.
 ## 5. Kiến Trúc "Hybrid AI" Trong Xử Lý Truy Vấn (Query Orchestration)
 Để giải quyết bài toán mâu thuẫn giữa "Độ chính xác tuyệt đối" (BI) và "Khả năng linh hoạt" (AI), Mimir hoạt động theo cơ chế **Lai (Hybrid)**. Hệ thống không ép LLM phải chọn một phương pháp duy nhất mà kết hợp cả hai:
 
@@ -69,4 +76,5 @@ Toàn bộ quá trình cắt quyền diễn ra dưới 1 phút, đảm bảo k�
 - **Kích hoạt khi:** Người dùng hỏi những câu mang tính chất khám phá, ngẫu hứng (Ad-hoc) mà đội Data chưa kịp xây dựng sẵn Metric trên Superset.
 - **Hoạt động:** Mimir sẽ chọc vào Tầng 4 (Obsidian) để lôi ra các định nghĩa, cạm bẫy dữ liệu (Data Traps) và lược đồ bảng (OBT Layer Gold). Dựa vào ngữ cảnh này, LLM tự động viết ra câu lệnh truy vấn SQL thô.
 - **Bảo mật tuyệt đối (Zero Trust):** Câu lệnh SQL do AI sinh ra KHÔNG ĐƯỢC CHẠY TRỰC TIẾP vào CSDL. n8n sẽ đẩy câu lệnh SQL này qua cổng API **SQL Lab của Superset**, đính kèm theo JWT Token của chính người dùng đó. Superset sẽ tự động kẹp luật Row-Level Security (RLS) vào trước khi giao cho DuckDB tính toán. Nhờ vậy, AI không bao giờ vượt quyền được danh tính của người dùng thực.
+
 
