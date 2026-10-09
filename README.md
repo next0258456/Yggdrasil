@@ -1,4 +1,4 @@
-﻿# Yggdrasil Data Platform (v0.1 Beta)
+# Yggdrasil Data Platform (v0.1 Beta)
 
 > **Minimalist Single-Node Lakehouse powered by Generative BI & Agentic Analytics.**
 
