@@ -25,14 +25,14 @@ Yggdrasil v0.1 là nền tảng Data Lakehouse được thiết kế tối giả
 
 Kho lưu trữ này hiện tại đang đóng vai trò là **Bản thiết kế cốt lõi (Architecture & Blueprint Repository)**. Các thư mục mã nguồn thực tế (như dbt, Airflow, Polars) sẽ được khởi tạo trong giai đoạn Triển khai (Implementation).
 
-``	ext
+```	ext
 Yggdrasil/
 ├── docs/                 # Tài liệu cốt lõi (Export từ Obsidian)
 │   ├── architecture/     # Thiết kế chi tiết các tầng (Tầng 1 -> Tầng 5)
 │   ├── adrs/             # Architecture Decision Records (Lưu vết quyết định)
 │   └── guides/           # Hướng dẫn thực chiến & Lập luận kỹ thuật (PoC/Benchmarks)
 └── README.md             # Tuyên ngôn và Tổng quan kiến trúc
-`
+```
 
 ---
 *Built with discipline for the Data Engineers who hate complexity.*
