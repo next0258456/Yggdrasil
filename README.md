@@ -1,8 +1,8 @@
-# Yggdrasil Data Platform (v0.1 Beta)
+﻿# Yggdrasil Data Platform (v0.1 Beta)
 
-> **Minimalist Single-Node Lakehouse powered by Generative BI & Agentic Analytics.**
+> *"Để đáp ứng một doanh nghiệp bình thường (không phải Hyper-scaler), kiến trúc của một Data Platform có thể tối giản tới mức nào?"*
 
-Yggdrasil v0.1 là nền tảng Data Lakehouse được thiết kế tối giản, loại bỏ sự cồng kềnh của các cụm phân tán (Spark/Hadoop) để tối ưu hiệu năng trên Single-Node, kết hợp với bảo mật Zero-Trust và năng lực AI Agentic.
+**Yggdrasil v0.1** chính là câu trả lời. Đây là nền tảng Data Lakehouse từ chối sự cồng kềnh của các cụm phân tán (Spark/Hadoop) để vắt kiệt hiệu năng trên kiến trúc Single-Node, kết hợp cùng bảo mật Zero-Trust và năng lực AI Agentic.
 
 ## 🏛️ Kiến Trúc Cốt Lõi (Architecture Stack)
 
@@ -36,3 +36,4 @@ Yggdrasil/
 
 ---
 *Built with discipline for the Data Engineers who hate complexity.*
+
