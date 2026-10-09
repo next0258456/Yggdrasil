@@ -1,4 +1,4 @@
-﻿# Tầng 5: Thiết Kế Cổng Giao Tiếp AI & Điều Phối (AI Gateway & Orchestration Layer) - Mimir
+# Tầng 5: Thiết Kế Cổng Giao Tiếp AI & Điều Phối (AI Gateway & Orchestration Layer) - Mimir
 
 ## 1. Tầm Nhìn & Triết Lý Sản Phẩm (Mimir's Product Vision)
 Mimir không phải là một công cụ sinh ra để thay thế nhân sự hay tự động hóa một cách máy móc. Đây là giải pháp **giải phóng sức lao động** và **trao quyền chủ động**. Việc phát triển Mimir luôn bám sát 3 định hướng cốt lõi dành cho 3 nhóm đối tượng:
@@ -55,7 +55,7 @@ Khác với các hệ thống truyền thống, Yggdrasil sử dụng n8n làm C
 3. Webview gửi gói tin gồm [User, Password, Zalo_User_ID] về Webhook của n8n.
 4. n8n cầm User/Password đi gõ cửa API của Superset và nhận về JWT Token (Access/Refresh Token).
 5. **Ràng buộc Bảo mật:** n8n lưu bản đồ ánh xạ Zalo_User_ID <-> JWT Token vào Database bảo mật (Postgres/Redis). Ngay sau đó, n8n **hủy bỏ Password**, hoàn toàn không lưu trữ Password của người dùng.
-6. Kể từ các lần chat sau, Mimir Bot chỉ dùng Zalo_User_ID để tra cứu Token và lấy dữ liệu, người dùng không bao giờ phải đăng nhập lại.
+6. Kể từ các lần chat sau, Mimir Bot chỉ dùng Zalo_User_ID để tra cứu Token và lấy dữ liệu. Nhân viên **BẮT BUỘC phải đăng nhập lại (Re-authenticate)** khi Refresh Token hết hạn (Cấu hình cực ngắn: **10 tiếng** theo chuẩn Zero-Trust, ép nhân sự phải đăng nhập mới mỗi ngày làm việc), hoặc khi đổi thiết bị Zalo.
 
 ### 4.3. Cơ Chế Kill Switch (2 Cấp Độ)
 Để xử lý linh hoạt các tình huống rủi ro mà không làm tăng gánh nặng vận hành, hệ thống chia công tắc tử thần thành 2 cấp độ, được điều khiển trực tiếp bằng giao diện Master IAM (Google Sheet):
