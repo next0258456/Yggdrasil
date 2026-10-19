@@ -1,4 +1,4 @@
-﻿# Yggdrasil Data Platform (v0.1 Beta)
+# Yggdrasil Data Platform (v0.1 Beta)
 
 > *"Để đáp ứng một doanh nghiệp bình thường (không phải Hyper-scaler), kiến trúc của một Data Platform có thể tối giản tới mức nào?"*
 
@@ -8,7 +8,7 @@
 
 - **Storage**: MinIO / S3 (Object Storage)
 - **Table Format**: Apache Iceberg
-- **Catalog**: Postgres JDBC Catalog (Single Source of Truth)
+- **Catalog**: Iceberg REST Catalog (Bifrost Proxy - Golang + Embedded DuckDB)
 - **Compute Engine**: Polars (Gate 1: Data Cleaning) & dbt-duckdb (Gate 2: Business Modeling)
 - **Orchestration**: n8n (External Integrations) & Airflow 3 (Internal Orchestrator)
 - **BI & Security Gateway**: Apache Superset (Enforce RLS & JWT)

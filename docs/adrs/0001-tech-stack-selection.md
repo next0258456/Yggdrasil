@@ -1,6 +1,6 @@
-﻿# ADR 0001: Lựa chọn Tech Stack cốt lõi cho Yggdrasil v0.1
+# ADR 0001: Lựa chọn Tech Stack cốt lõi cho Yggdrasil v0.1
 
-- **Trạng thái**: Đã phê duyệt (Approved)
+- **Trạng thái**: Đã phê duyệt (Approved) - *Lưu ý: Phần lựa chọn Postgres JDBC Catalog đã bị phế truất và thay thế bởi Bifrost Proxy (Iceberg REST Catalog) (Xem ADR 0003).*
 - **Ngày quyết định**: 2026-10-03
 - **Người ra quyết định**: Cong Anh
 

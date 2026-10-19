@@ -1,4 +1,4 @@
-﻿# Local environments
+# Local environments
 .env
 .venv/
 env/
@@ -9,10 +9,19 @@ venv.bak/
 
 # Scratch & temp files
 scratch/
+scratch.zip
+*.zip
 temp/
 *.log
 *.tmp
 *.bak
+
+# Sub-repositories (Bifrost & Valkyrie)
+Bifrost Proxy/
+bifrost/
+Bifrost/
+Valkyrie/
+valkyrie/
 
 # OS generated files
 .DS_Store
