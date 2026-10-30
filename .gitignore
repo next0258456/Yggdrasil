@@ -16,7 +16,11 @@ temp/
 *.tmp
 *.bak
 
-# Sub-repositories (Bifrost & Valkyrie)
+# Sub-repositories (Bifrost, Valkyrie, Mimir)
+rag+mimir/
+rag/
+mimir/
+Mimir/
 Bifrost Proxy/
 bifrost/
 Bifrost/

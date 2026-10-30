@@ -22,6 +22,7 @@
 | :--- | :--- | :--- |
 | 🌉 [**bifrost-proxy**](https://github.com/next0258456/bifrost-proxy) | **Golang + Embedded DuckDB** | **Iceberg REST Catalog & DuckLake Sync Gateway**: Tiếp nhận luồng ghi dữ liệu chuẩn Iceberg REST (Redpanda, Spark, PyIceberg) với RAM < 300MB, đồng bộ tức thì sang Native DuckLake Catalog cho truy vấn Sub-second. |
 | ⚔️ [**valkyrie**](https://github.com/next0258456/valkyrie) | **Python + DuckDB Engine** | **Data Contract & Circuit Breaker Engine**: Trình biên dịch hợp đồng dữ liệu YAML sang DuckDB SQL Single-Pass vector hóa, tự động phân tách Clean/DLQ và bảo vệ Lakehouse khỏi dữ liệu rác. |
+| 🧠 [**mimir**](https://github.com/next0258456/mimir) | **MCP Protocol + Obsidian Semantic + Hybrid Search** | **Pragmatic RAG & Cognitive Gateway (Tầng 4 & 5)**: Lớp ngữ nghĩa Data-Blind (Zero-Chunking Markdown Graph cho Text-to-SQL) và cổng nhận thức định tuyến Dual-Track (Saved Metrics < 50ms, Ad-hoc SQL qua Superset RLS, SOP Hybrid Search). |
 
 ## 🚀 Nguyên Lý Thiết Kế (The Y7L Way)
 
@@ -43,7 +44,8 @@ Yggdrasil (Platform Blueprint)
 ├── README.md             # Tuyên ngôn và Tổng quan kiến trúc
 │
 ├── 🔗 [bifrost-proxy]    # (Sub-repo) Iceberg REST Catalog & DuckLake Sync Proxy
-└── 🔗 [valkyrie]         # (Sub-repo) Data Contract & Circuit Breaker Engine
+├── 🔗 [valkyrie]         # (Sub-repo) Data Contract & Circuit Breaker Engine
+└── 🔗 [mimir]            # (Sub-repo) Pragmatic RAG & Cognitive Gateway
 ```
 
 ---
