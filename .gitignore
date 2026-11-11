@@ -35,3 +35,12 @@ valkyrie/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# NVIDIA Framework Sub-repos & Runtime Outputs
+ai platform/01-nvidia-framework/auto-ontology/
+ai platform/01-nvidia-framework/NeMo-Agent-Toolkit/
+ai platform/01-nvidia-framework/NeMo-Relay/
+ai platform/01-nvidia-framework/NeMo-Retriever/
+ai platform/01-nvidia-framework/SkillEvaluator/
+ai platform/01-nvidia-framework/output/*
+!ai platform/01-nvidia-framework/output/.gitkeep

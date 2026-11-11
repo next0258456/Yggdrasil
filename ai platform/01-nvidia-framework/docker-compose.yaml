@@ -1,0 +1,394 @@
+# ==============================================================================
+# YGGDRASIL DATA PLATFORM — 01-NVIDIA-FRAMEWORK (TITAN ARCHITECTURE)
+# ==============================================================================
+# Hợp nhất chuẩn xác theo kiến trúc gốc của NVIDIA:
+# 1. auto-ontology:
+#    - postgres (pgvector:pg17)
+#    - auto-ontology-migrate (One-shot Alembic schema `public`)
+#    - frontend-migrate (One-shot Prisma schema `frontend`)
+#    - auto-ontology (Backend API :3001)
+#    - ingestion-service (Schema crawler :3002)
+#    - auto-ontology-mcp (MCP Server :3003)
+#    - auto-ontology-frontend (Next.js UI :3000)
+# 2. NeMo-Retriever:
+#    - vectordb (LanceDB :7671)
+#    - retriever (Multimodal Ingestion & MCP Server :7670 + Docker `configs:`)
+#    - [Profile: local-vision] nim-page-elements, nim-table-structure & nim-ocr (Nemotron Vision/OCR)
+# 3. Observability:
+#    - phoenix (Arize Phoenix OTLP Collector & UI :6006 / :4317)
+# 4. Autonomous Agent Worker:
+#    - nemoclaw (OpenClaw Loop & OpenShell Sandbox :7681)
+# ==============================================================================
+
+name: yggdrasil-nvidia-titan
+
+networks:
+  yggdrasil-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  retriever_data:
+  vectordb_data:
+  phoenix_data:
+  nim_page_elements_cache:
+  nim_table_structure_cache:
+  nim_ocr_cache:
+  nemoclaw_data:
+
+x-auto-ontology-common: &auto-ontology-common
+  build:
+    context: ./auto-ontology
+    dockerfile: Dockerfile
+  image: yggdrasil-auto-ontology:latest
+  networks: [yggdrasil-net]
+  env_file:
+    - .env
+  environment: &auto-ontology-env
+    POSTGRES_HOST: postgres
+    POSTGRES_PORT: "5432"
+    POSTGRES_USER: ${POSTGRES_USER:-yggdrasil}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yggdrasil_secret_password}
+    POSTGRES_DATABASE: ${POSTGRES_DATABASE:-auto_ontology}
+    INGESTION_SERVICE_URL: http://ingestion-service:3002
+    OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:4317
+
+x-retriever-image: &retriever-image
+  image: yggdrasil-nemo-retriever-service:latest
+  build:
+    context: ./NeMo-Retriever
+    dockerfile: Dockerfile
+    target: service
+    args:
+      DOWNLOAD_DEFAULT_TOKENIZER: "True"
+  networks: [yggdrasil-net]
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
+services:
+  # ============================================================================
+  # PHẦN 1: CƠ SỞ DỮ LIỆU & AUTO-ONTOLOGY (NL-TO-SQL & SEMANTIC GRAPH)
+  # ============================================================================
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: yggdrasil-postgres
+    restart: unless-stopped
+    networks: [yggdrasil-net]
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yggdrasil}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-yggdrasil_secret_password}
+      POSTGRES_DB: ${POSTGRES_DATABASE:-auto_ontology}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-yggdrasil} -d ${POSTGRES_DATABASE:-auto_ontology}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot Job: Chạy Alembic migration khởi tạo schema `public` (catalog + ontology)
+  auto-ontology-migrate:
+    <<: *auto-ontology-common
+    container_name: yggdrasil-ontology-migrate
+    command: ["migrate"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # One-shot Job: Chạy Prisma migration khởi tạo schema `frontend` (auth + sessions)
+  frontend-migrate:
+    build:
+      context: ./auto-ontology/frontend
+      dockerfile: Dockerfile
+      args:
+        PYTHON_API_URL: http://auto-ontology:3001
+    image: yggdrasil-auto-ontology-frontend:latest
+    container_name: yggdrasil-ontology-frontend-migrate
+    networks: [yggdrasil-net]
+    working_dir: /app/migrate
+    env_file:
+      - .env
+    environment:
+      <<: *auto-ontology-env
+    command: ["sh", "prisma/migrate.sh"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Service quét Schema & Dữ liệu mẫu từ DB nguồn đưa vào pgvector (:3002)
+  ingestion-service:
+    <<: *auto-ontology-common
+    container_name: yggdrasil-ontology-ingestion
+    restart: unless-stopped
+    command: ["ingestion_service"]
+    ports:
+      - "${ONTOLOGY_INGEST_PORT:-3002}:3002"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:3002/health/live', timeout=3).status == 200 else 1)\"",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      postgres:
+        condition: service_started
+      auto-ontology-migrate:
+        condition: service_completed_successfully
+
+  # Backend chính của Auto-Ontology (:3001)
+  auto-ontology:
+    <<: *auto-ontology-common
+    container_name: yggdrasil-ontology-api
+    restart: unless-stopped
+    ports:
+      - "${ONTOLOGY_API_PORT:-3001}:3001"
+    depends_on:
+      postgres:
+        condition: service_started
+      auto-ontology-migrate:
+        condition: service_completed_successfully
+      ingestion-service:
+        condition: service_started
+
+  # MCP Server chính chủ của Auto-Ontology cho phép Agent gọi NL-to-SQL (:3003)
+  auto-ontology-mcp:
+    build:
+      context: ./auto-ontology/mcp
+      dockerfile: Dockerfile
+    image: yggdrasil-auto-ontology-mcp:latest
+    container_name: yggdrasil-ontology-mcp
+    restart: unless-stopped
+    networks: [yggdrasil-net]
+    ports:
+      - "${ONTOLOGY_MCP_PORT:-3003}:3003"
+    env_file:
+      - .env
+    environment:
+      AUTO_ONTOLOGY_URL: http://auto-ontology:3001
+      FRONTEND_INTERNAL_URL: http://auto-ontology-frontend:3000
+    depends_on:
+      auto-ontology:
+        condition: service_healthy
+
+  # Giao diện quản trị đồ thị tri thức Next.js (:3000)
+  auto-ontology-frontend:
+    build:
+      context: ./auto-ontology/frontend
+      dockerfile: Dockerfile
+      args:
+        PYTHON_API_URL: http://auto-ontology:3001
+    image: yggdrasil-auto-ontology-frontend:latest
+    container_name: yggdrasil-ontology-ui
+    restart: unless-stopped
+    networks: [yggdrasil-net]
+    ports:
+      - "${ONTOLOGY_WEB_PORT:-3000}:3000"
+    env_file:
+      - .env
+    environment:
+      <<: *auto-ontology-env
+      PYTHON_API_URL: http://auto-ontology:3001
+    depends_on:
+      auto-ontology:
+        condition: service_healthy
+      frontend-migrate:
+        condition: service_completed_successfully
+
+  # ============================================================================
+  # PHẦN 2: NEMO-RETRIEVER (MULTIMODAL DOCUMENT, TABLE OCR & VECTORDB)
+  # ============================================================================
+  vectordb:
+    <<: *retriever-image
+    container_name: yggdrasil-nemo-vectordb
+    restart: unless-stopped
+    command:
+      [
+        "python", "-m", "nemo_retriever.service.vectordb_app",
+        "--lancedb-uri", "/data/vectordb",
+        "--table-name", "nemo_retriever",
+        "--embed-endpoint", "${NIM_EMBED_URL:-https://integrate.api.nvidia.com/v1/embeddings}",
+        "--embed-model", "${NIM_EMBED_MODEL:-nvidia/nemotron-3-embed-1b}",
+        "--port", "7671",
+      ]
+    environment:
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-${NGC_API_KEY:-}}
+    volumes:
+      - vectordb_data:/data/vectordb
+    ports:
+      - "${RETRIEVER_VDB_PORT:-7671}:7671"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:7671/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  retriever:
+    <<: *retriever-image
+    container_name: yggdrasil-nemo-retriever
+    restart: unless-stopped
+    ports:
+      - "${RETRIEVER_HTTP_PORT:-7670}:7670"
+    environment:
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      NEMO_RETRIEVER_LLM_API_KEY: ${DEFAULT_MODELS_API_KEY:-${NVIDIA_API_KEY:-}}
+      OTEL_SDK_DISABLED: "false"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://phoenix:4317
+      OTEL_SERVICE_NAME: nemo-retriever-service
+    configs:
+      - source: retriever_service_config
+        target: /etc/nemo-retriever/retriever-service.yaml
+        mode: 0444
+    volumes:
+      - retriever_data:/var/lib/nemo-retriever
+    depends_on:
+      vectordb:
+        condition: service_healthy
+      phoenix:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:7670/v1/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  # [TÙY CHỌN OFFLINE] 3 container NIM nhẹ (~700MB) tự host bộ model Nemotron Vision & OCR tại chỗ
+  # Chỉ khởi động khi chạy: docker compose --profile local-vision up -d
+  nim-page-elements:
+    profiles: [local-vision]
+    image: nvcr.io/nim/nvidia/nemotron-object-detection:2.0.0
+    container_name: yggdrasil-nim-page-elements
+    restart: unless-stopped
+    networks: [yggdrasil-net]
+    ports:
+      - "8001:8000"
+    environment:
+      NGC_API_KEY: ${NGC_API_KEY:-}
+      NIM_SERVER_BIND_ADDR: 0.0.0.0:8000
+      NIM_ENGINE_MODEL_NAME: nvidia/nemotron-page-elements-v3
+    volumes:
+      - nim_page_elements_cache:/model
+
+  nim-table-structure:
+    profiles: [local-vision]
+    image: nvcr.io/nim/nvidia/nemotron-object-detection:2.0.0
+    container_name: yggdrasil-nim-table-structure
+    restart: unless-stopped
+    networks: [yggdrasil-net]
+    ports:
+      - "8002:8000"
+    environment:
+      NGC_API_KEY: ${NGC_API_KEY:-}
+      NIM_SERVER_BIND_ADDR: 0.0.0.0:8000
+      NIM_ENGINE_MODEL_NAME: nvidia/nemotron-table-structure-v1
+    volumes:
+      - nim_table_structure_cache:/model
+
+  nim-ocr:
+    profiles: [local-vision]
+    image: nvcr.io/nim/nvidia/nemotron-ocr-v2:2.0.0
+    container_name: yggdrasil-nim-ocr
+    restart: unless-stopped
+    networks: [yggdrasil-net]
+    ports:
+      - "8003:8000"
+    environment:
+      NGC_API_KEY: ${NGC_API_KEY:-}
+      NIM_SERVER_BIND_ADDR: 0.0.0.0:8000
+      NIM_ENGINE_MODEL_NAME: nvidia/nemotron-ocr-v2
+      NIM_ENGINE_MODEL_VARIANT: multilingual
+    volumes:
+      - nim_ocr_cache:/model
+
+  # ============================================================================
+  # PHẦN 3: OBSERVABILITY & TRACING (ARIZE PHOENIX)
+  # ============================================================================
+  phoenix:
+    image: arizephoenix/phoenix:latest
+    container_name: yggdrasil-phoenix
+    restart: unless-stopped
+    networks: [yggdrasil-net]
+    ports:
+      - "${PHOENIX_PORT:-6006}:6006" # Phoenix Web UI & OTLP HTTP Collector
+      - "4317:4317"                  # OTLP gRPC Collector
+    volumes:
+      - phoenix_data:/data
+
+  # ============================================================================
+  # PHẦN 4: NEMOCLAW — AUTONOMOUS ALWAYS-ON AGENT WORKER (OPENSHELL SANDBOX)
+  # ============================================================================
+  nemoclaw:
+    image: ${NEMOCLAW_IMAGE:-ghcr.io/nvidia/nemoclaw/sandbox-base:latest}
+    container_name: yggdrasil-nemoclaw
+    restart: unless-stopped
+    command: ["openclaw", "gateway", "run", "--bind", "auto", "--port", "7681", "--allow-unconfigured"]
+    networks: [yggdrasil-net]
+    ports:
+      - "${NEMOCLAW_PORT:-7681}:7681" # Web Control Dashboard & WebSocket Gateway
+    environment:
+      OPENCLAW_GATEWAY_TOKEN: ${AUTH_SECRET:-yggdrasil_super_secret_auth_key_2026}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      OPENAI_API_BASE: ${DEFAULT_MODELS_ENDPOINT:-https://api.deepseek.com/v1}
+      OPENAI_API_KEY: ${DEFAULT_MODELS_API_KEY:-}
+      NEMOCLAW_DISABLE_TELEMETRY: "1"
+      OPENSHELL_POLICY: restricted
+      OPENSHELL_WORKSPACE: /sandbox
+      RETRIEVER_MCP_URL: http://retriever:7670/mcp
+      ONTOLOGY_MCP_URL: http://auto-ontology-mcp:3003/mcp
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - nemoclaw_data:/nemoclaw-data
+      - ./output:/sandbox/output
+    depends_on:
+      auto-ontology-mcp:
+        condition: service_healthy
+      retriever:
+        condition: service_healthy
+
+# ==============================================================================
+# CẤU HÌNH NỘI DUNG FILE YAML MOUNT VÀO NEMO-RETRIEVER
+# ==============================================================================
+configs:
+  retriever_service_config:
+    content: |
+      mode: standalone
+      server:
+        host: "0.0.0.0"
+        port: 7670
+      logging:
+        level: "INFO"
+        file: "/var/lib/nemo-retriever/retriever-service.log"
+        format: "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+      nim_endpoints:
+        page_elements_invoke_url: "${NIM_PAGE_ELEMENTS_URL:-https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-page-elements-v3}"
+        table_structure_invoke_url: "${NIM_TABLE_STRUCTURE_URL:-https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-table-structure-v1}"
+        ocr_invoke_url: "${NIM_OCR_URL:-https://ai.api.nvidia.com/v1/cv/nvidia/nemotron-ocr-v2}"
+        embed_invoke_url: "${NIM_EMBED_URL:-https://integrate.api.nvidia.com/v1/embeddings}"
+        embed_model_name: "${NIM_EMBED_MODEL:-nvidia/nemotron-3-embed-1b}"
+        caption_invoke_url: ${NIM_CAPTION_URL:-null}
+        caption_model_name: ${NIM_CAPTION_MODEL_YAML:-null}
+        api_key: null
+      local_models:
+        enabled: false
+      llm:
+        enabled: false
+      mcp:
+        enabled: true
+      auth:
+        api_token: ""
+        allow_unscoped_dev: true
+      vectordb:
+        enabled: true
+        lancedb_uri: "/data/vectordb"
+        table_name: "nemo_retriever"
+        embed_model: "${NIM_EMBED_MODEL:-nvidia/nemotron-3-embed-1b}"
+        vectordb_url: "http://vectordb:7671"
