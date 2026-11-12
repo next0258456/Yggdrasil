@@ -1,0 +1,70 @@
+# ==============================================================================
+# YGGDRASIL DATA PLATFORM — 02-LANGFUSE (LITELLM HARD-CAP & KEY REVOCATION PROXY)
+# ==============================================================================
+# Vai trò của LiteLLM Proxy (:4000) khi đứng trước Langfuse (:3100 / :3031):
+# 1. Hard Spend Limit (Cầu dao cắt tiền tự động): Khóa cứng trần chi tiêu USD
+#    (`max_budget`, `budget_duration: 1d / 30d`) cho từng Phòng ban (Team) & Agent Key.
+#    Tiêu lố 1 xu lập tức trả HTTP 400/429 BudgetExceededError, ngắt gọi Upstream!
+# 2. Instant Key Revocation & Block (Cắt/Thu hồi API Key trong 1 lệnh):
+#    Thu hồi quyền truy cập (`/key/block`, `/key/delete`, `/team/block`) tức thì
+#    trên Redis + Postgres mà không cần chạm vào Provider Key gốc.
+# 3. Rate Limiting (Chống Agent bị kẹt vòng lặp vô hạn):
+#    Giới hạn cứng RPM (Requests/phút) và TPM (Tokens/phút) trên Redis.
+# 4. Đồng bộ Sổ cái Kế toán sang Langfuse ClickHouse:
+#    Tự động bắn toàn bộ Trace, Cost USD, Token Usage và mã lỗi bị chặn về Langfuse.
+# ==============================================================================
+
+model_list:
+  # ----------------------------------------------------------------------------
+  # 1. CÁC MODEL ĐI QUA LANGFUSE NATIVE AI GATEWAY (HOẶC TRỰC TIẾP UPSTREAM)
+  # ----------------------------------------------------------------------------
+  - model_name: yggdrasil-default-llm
+    litellm_params:
+      model: openai/${DEFAULT_LLM_MODEL:-deepseek-chat}
+      api_base: ${UPSTREAM_LLM_API_BASE:-http://ai-gateway:3031/v1}
+      api_key: os.environ/UPSTREAM_LLM_API_KEY
+      rpm: 120
+      tpm: 100000
+
+  - model_name: nvidia-nemotron-70b
+    litellm_params:
+      model: nvidia_nim/nvidia/llama-3.1-nemotron-70b-instruct
+      api_base: ${NVIDIA_NIM_API_BASE:-https://integrate.api.nvidia.com/v1}
+      api_key: os.environ/NVIDIA_API_KEY
+      rpm: 60
+      tpm: 80000
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+      rpm: 200
+      tpm: 150000
+
+litellm_settings:
+  # Tự động đẩy toàn bộ log thành công & thất bại (kể cả lỗi vượt ngân sách) sang Langfuse
+  success_callback: ["langfuse"]
+  failure_callback: ["langfuse"]
+  
+  # Kết nối Redis để đồng bộ bộ đếm Rate-Limit (RPM/TPM) và trạng thái khóa Key tức thì
+  cache: false
+  redis_host: redis
+  redis_port: 6379
+
+  # Trần ngân sách bảo vệ toàn cục mặc định (Global Safety Circuit Breaker: $100 / tháng)
+  max_budget: 100.0
+  budget_duration: 30d
+
+  # Tự động cắt kết nối nếu Upstream treo quá 60s
+  request_timeout: 60
+  num_retries: 2
+
+general_settings:
+  # Master Key dùng cho Admin tạo/cắt/thu hồi Virtual Key của các phòng ban
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/LITELLM_DATABASE_URL
+  store_model_in_db: true
+  
+  # Bật kiểm tra ngân sách nghiêm ngặt trên từng Request trước khi chuyển tiếp
+  enable_jwt_auth: false
+  allow_requests_on_db_unavailable: false

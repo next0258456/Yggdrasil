@@ -1,5 +1,11 @@
 # 03. Y7L Native (`v0.1`) — Gói Khởi Động Tối Thiểu & Dặm Cuối (`03-y7l-native`)
 
+<p align="center">
+  <img src="./construction.jpg" alt="Y7L Native Under Construction" width="480" />
+  <br>
+  <em>🚧 <strong>Y7L Native Bootstrapping Engine — Đang Hoàn Thiện Các Chặng Kỹ Thuật (Under Construction)</strong> 🚧</em>
+</p>
+
 > **Định vị thực tế:**  
 > Nhánh này **không phải** là một nền tảng AI hoàn chỉnh để đi so găng tính năng với `01-nvidia-framework` hay `02-langfuse`.  
 > Nó chỉ là **gói chắp vá có kỷ luật ở giai đoạn `v0.1` (Bootstrapping — từ lúc doanh nghiệp chưa có gì đến lúc có cái chạy được ở Ngày 1)**, giải quyết 2 bài toán thực dụng: **ép tài nguyên về mức tối thiểu** và **xử lý "Dặm cuối" (Last-Mile)** khi những người vận hành chính hàng ngày (Kế toán, HR, Ops, Sale) **không biết viết code Python**. Khi doanh nghiệp lớn lên ở Ngày 10, từng phần của nhánh này sẽ bị cắt bỏ và thay thế dần.
@@ -107,6 +113,7 @@ Vì được thiết kế để tiết kiệm tối đa ở Ngày 1 (`v0.1`), nh
 
 ## 5. Tài Liệu Chi Tiết Trong Repo
 
+* **Lộ trình Bootstrapping & Thời gian hoàn thành (Ngày 1 ➔ Ngày 10):** [`ROADMAP.md`](./ROADMAP.md)
 * **Tóm tắt nhanh không lý thuyết:** [`rag+mimir/docs/00_quickstart_without_theory.md`](../../rag+mimir/docs/00_quickstart_without_theory.md)
 * **Thiết kế Tầng 4 (Obsidian `DATA_TRAP` & Hybrid Search SOP):** [`docs/architecture/04_Knowledge_Semantic_Layer_Design.md`](../../docs/architecture/04_Knowledge_Semantic_Layer_Design.md) & [`rag+mimir/docs/02_data_blind_semantic_layer.md`](../../rag+mimir/docs/02_data_blind_semantic_layer.md)
 * **Thiết kế Tầng 5 (Zalo Webview, Google Sheet Kill-Switch & Single-Hop):** [`docs/architecture/05_AI_Gateway_Layer_Design.md`](../../docs/architecture/05_AI_Gateway_Layer_Design.md) & [`rag+mimir/docs/03_cognitive_gateway_and_dual_track.md`](../../rag+mimir/docs/03_cognitive_gateway_and_dual_track.md)

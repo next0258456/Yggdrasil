@@ -17,9 +17,12 @@ Tài liệu hướng dẫn khởi chạy nhanh cụm **NVIDIA Enterprise AI Plat
 | **`vectordb`** | `:7671` | LanceDB Vector Store lưu trữ tài liệu RAG | Mặc định |
 | **`phoenix`** | `:6006` / `:4317` | Arize Phoenix UI (`:6006`) & OTLP Trace Collector (`:4317`) | Mặc định |
 | **`nemoclaw`** | `:7681` | Autonomous Always-on Agent Worker (OpenShell Sandbox & OpenClaw Loop) | Mặc định |
+| **`nemotron-voice-agent`** | `:7860` | Cổng đàm thoại thời gian thực (Pipecat WebRTC/WebSocket + `/v1/realtime`, `Talker/Thinker` Cascaded Voice) | Mặc định |
 | **`nim-page-elements`** | `:8001` | `nemotron-page-elements-v3` (kiến trúc YOLOX 54M ~200MB) phân vùng Layout trang PDF | `--profile local-vision` |
 | **`nim-table-structure`** | `:8002` | `nemotron-table-structure-v1` (kiến trúc YOLOX 54M ~200MB) bổ dòng, cột & cell bảng biểu | `--profile local-vision` |
 | **`nim-ocr`** | `:8003` | `nemotron-ocr-v2` (~300MB) đọc chữ đa ngôn ngữ trong cell | `--profile local-vision` |
+| **`nim-asr-streaming`** | `:9001` / `:50152` | `nemotron-asr-streaming` tự host nhận diện giọng nói thời gian thực qua Riva gRPC | `--profile local-voice` |
+| **`nim-tts-magpie`** | `:9000` / `:50151` | `magpie-tts-multilingual` tự host tổng hợp giọng nói đa ngôn ngữ qua Riva gRPC | `--profile local-voice` |
 
 ---
 
@@ -27,7 +30,7 @@ Tài liệu hướng dẫn khởi chạy nhanh cụm **NVIDIA Enterprise AI Plat
 
 ### Bước 1: Tạo file `.env`
 ```bash
-cd "ai platform/01-nvidia-framework"
+cd "deploy/ai-platform/01-nvidia-framework"
 cp .env.example .env
 ```
 
@@ -86,6 +89,7 @@ docker compose --profile local-vision up -d
      - Email: `admin@yggdrasil.local` | Password: `yggdrasil_admin_123`
    - **NemoClaw Web Terminal / Dashboard:** `http://localhost:7681`
      - Gateway Token: `yggdrasil_super_secret_auth_key_2026`
+   - **Nemotron Voice Agent WebRTC/WebSocket UI:** `http://localhost:7860` (và cổng OpenAI Realtime tương thích: `ws://localhost:7860/v1/realtime`)
    - **Arize Phoenix (Prompt CMS, Playground & OTLP Traces):** `http://localhost:6006`
      - Email: `admin@localhost` | Password: `admin`
    - **NeMo-Retriever Healthcheck:** `curl http://localhost:7670/v1/health`

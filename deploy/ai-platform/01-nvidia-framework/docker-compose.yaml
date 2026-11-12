@@ -18,6 +18,9 @@
 #    - phoenix (Arize Phoenix OTLP Collector & UI :6006 / :4317)
 # 4. Autonomous Agent Worker:
 #    - nemoclaw (OpenClaw Loop & OpenShell Sandbox :7681)
+# 5. Nemotron Voice Agent (Cascaded Talker/Thinker Voice Gateway):
+#    - nemotron-voice-agent (Pipecat WebRTC/WebSocket + VAD Barge-in :7860)
+#    - [Profile: local-voice] nim-asr-streaming (:9001/:50152) & nim-tts-magpie (:9000/:50151)
 # ==============================================================================
 
 name: yggdrasil-nvidia-titan
@@ -34,6 +37,8 @@ volumes:
   nim_page_elements_cache:
   nim_table_structure_cache:
   nim_ocr_cache:
+  nim_asr_cache:
+  nim_tts_cache:
   nemoclaw_data:
 
 x-auto-ontology-common: &auto-ontology-common
@@ -353,6 +358,100 @@ services:
         condition: service_healthy
       retriever:
         condition: service_healthy
+
+  # ============================================================================
+  # PHẦN 5: NEMOTRON VOICE AGENT (CASCADED TALKER/THINKER VOICE GATEWAY :7860)
+  # ============================================================================
+  nemotron-voice-agent:
+    build:
+      context: ./nemotron-voice-agent
+      dockerfile: docker/Dockerfile
+    image: yggdrasil-nemotron-voice-agent:latest
+    container_name: yggdrasil-voice-agent
+    restart: unless-stopped
+    command: ["uv", "run", "python", "src/server.py", "--host", "0.0.0.0"]
+    networks: [yggdrasil-net]
+    ports:
+      - "${VOICE_AGENT_PORT:-7860}:7860" # WebRTC/WebSocket UI & OpenAI Realtime Gateway (/v1/realtime)
+    env_file:
+      - .env
+    environment:
+      APP_RUNTIME: container
+      EXAMPLE_SELECTION: ${VOICE_EXAMPLE_SELECTION:-frontend-backend-agent}
+      SERVICE_RECIPE: ${VOICE_SERVICE_RECIPE:-cloud}
+      PIPELINE_TLS: ${VOICE_PIPELINE_TLS:-false}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      ENABLE_TRACING: "true"
+      OTEL_EXPORTER_OTLP_ENDPOINT: phoenix:4317
+      USE_SILERO_VAD_TURN_DETECTION: ${USE_SILERO_VAD_TURN_DETECTION:-false}
+      SILERO_VAD_STOP_SECS: ${SILERO_VAD_STOP_SECS:-0.3}
+      RETRIEVER_MCP_URL: http://retriever:7670/mcp
+      ONTOLOGY_MCP_URL: http://auto-ontology-mcp:3003/mcp
+      NEMOCLAW_GATEWAY_URL: http://nemoclaw:7681
+    volumes:
+      - ./nemotron-voice-agent/src:/app/src:ro
+      - ./nemotron-voice-agent/examples_registry.yaml:/app/examples_registry.yaml:ro
+      - ./nemotron-voice-agent/services.yaml:/app/services.yaml:ro
+      - ./nemotron-voice-agent/settings.yaml:/app/settings.yaml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      phoenix:
+        condition: service_started
+      auto-ontology-mcp:
+        condition: service_healthy
+      retriever:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fk http://localhost:7860/health || curl -fk https://localhost:7860/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # [TÙY CHỌN OFFLINE VOICE] 2 container NIM tự host Nemotron Streaming ASR & Magpie Multilingual TTS
+  # Chỉ khởi động khi chạy: docker compose --profile local-voice up -d
+  nim-asr-streaming:
+    profiles: [local-voice]
+    image: nvcr.io/nim/nvidia/nemotron-asr-streaming:1.4.0
+    container_name: yggdrasil-nim-asr
+    restart: unless-stopped
+    networks:
+      yggdrasil-net:
+        aliases:
+          - nemotron-asr-streaming-english
+          - nemotron-asr-streaming-multilingual
+    ports:
+      - "50152:50052" # Riva gRPC ASR Streaming
+      - "9001:9001"   # NIM HTTP Health/API
+    environment:
+      NGC_API_KEY: ${NGC_API_KEY:-${NVIDIA_API_KEY:-}}
+      NIM_HTTP_API_PORT: "9001"
+      NIM_GRPC_API_PORT: "50052"
+      NIM_TAGS_SELECTOR: type=multi,mode=str
+    volumes:
+      - nim_asr_cache:/opt/nim/.cache
+
+  nim-tts-magpie:
+    profiles: [local-voice]
+    image: nvcr.io/nim/nvidia/magpie-tts-multilingual:1.10.1
+    container_name: yggdrasil-nim-tts
+    restart: unless-stopped
+    shm_size: 16GB
+    networks:
+      yggdrasil-net:
+        aliases:
+          - magpie-multilingual-tts-service
+    ports:
+      - "50151:50051" # Riva gRPC TTS Streaming
+      - "9000:9000"   # NIM HTTP Health/API
+    environment:
+      NGC_API_KEY: ${NGC_API_KEY:-${NVIDIA_API_KEY:-}}
+      NIM_HTTP_API_PORT: "9000"
+      NIM_GRPC_API_PORT: "50051"
+      NIM_TAGS_SELECTOR: name=magpie-tts-multilingual,batch_size=8
+    volumes:
+      - nim_tts_cache:/opt/nim/.cache
 
 # ==============================================================================
 # CẤU HÌNH NỘI DUNG FILE YAML MOUNT VÀO NEMO-RETRIEVER

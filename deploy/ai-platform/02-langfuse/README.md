@@ -1,50 +1,62 @@
 # 02. Langfuse Production LLMOps (`02-langfuse`)
 
-> **Triết lý:** Trạm thu phí trung tâm (**AI Gateway**) & Sổ cái kế toán AI (**FinOps Accounting**) theo mô hình **"Best-of-Breed Open Source"**.  
-> Đóng vai trò là **"Kế toán trưởng & Kiểm toán viên"** cho toàn bộ hệ thống AI: Mọi Agent bắt buộc đi qua cổng **Langfuse Native AI Gateway** và ghi sổ tức thì xuống **ClickHouse OLAP**, giúp Phòng Kế toán và Sếp nắm rõ từng phòng ban, từng nhân sự đang tiêu bao nhiêu tiền, vào tác vụ gì, có hiệu quả hay không (Automated Evals & 1-giây Prompt Rollback).
+> **Triết lý:** Trạm thu phí trung tâm (**LiteLLM Proxy + Langfuse AI Gateway**) & Sổ cái kế toán AI (**FinOps Accounting**) theo mô hình **"Best-of-Breed Open Source"**.  
+> Đóng vai trò là **"Cầu dao Cắt điện Tự động & Kế toán trưởng"** cho toàn bộ hệ thống AI: Mọi Agent bắt buộc đi qua chốt chặn **LiteLLM Proxy (`:4000`)** (kiểm soát trần chi tiêu USD `max_budget`, giới hạn RPM/TPM và cắt/thu hồi API Key tức thì) kết hợp **Langfuse Native AI Gateway (`:3031`)** và ghi sổ tức thì xuống **ClickHouse OLAP (`:8123`)**, giúp Phòng Kế toán và Sếp vừa nắm rõ từng xu chi phí, vừa tự động sập cầu dao ngắt điện ngay lập tức khi phòng ban tiêu lố hạn mức hoặc Agent bị lặp vô hạn!
 
 ---
 
 ## 📦 Danh Sách Các Services Trong Docker Compose
 
-Toàn bộ cụm bao gồm **7 container** hoạt động đồng bộ trên mạng riêng `langfuse-net`:
+Toàn bộ cụm bao gồm **8 container** hoạt động đồng bộ trên mạng riêng `langfuse-net`:
 
 | Service Container | Image & Phiên Bản | Port Host | Vai Trò & Chức Năng |
 | :--- | :--- | :--- | :--- |
-| **`ai-gateway`** | `langfuse/ai-gateway:latest` | `3031:3031` | **Native Rust LLM Proxy:** Proxy trung tâm điều phối mọi cuộc gọi LLM, bảo mật Key, Zero-code Tracing (< 3ms latency). |
-| **`langfuse-web`** | `langfuse/langfuse:latest` (`v4.77+`) | `3100:3000` | Web UI Dashboard, Quản lý Prompt, Evals, và Ingestion API. |
+| **`litellm-proxy`** | `ghcr.io/berriai/litellm:main-stable` | `4000:4000` | **Cầu dao Cắt tiền Tự động & Quản lý Virtual Key:** Cấp/thu hồi/khóa API Key tức thì (`/key/block`, `/key/delete`), ép trần chi tiêu cứng (`max_budget` USD), giới hạn RPM/TPM trên Redis. |
+| **`ai-gateway`** | `langfuse/ai-gateway:latest` | `3031:3031` | **Native Rust LLM Proxy:** Proxy trung tâm điều phối cuộc gọi LLM nội bộ, bảo mật Key gốc, Zero-code Tracing (< 3ms latency). |
+| **`langfuse-web`** | `langfuse/langfuse:latest` (`v4.77+`) | `3100:3000` | Web UI Dashboard Sổ cái FinOps, Quản lý Prompt, Evals, và Ingestion API. |
 | **`langfuse-worker`** | `langfuse/langfuse-worker:latest` | *Internal* | Async background worker xử lý batching, eval pipelines, blob encryption. |
 | **`clickhouse`** | `clickhouse/clickhouse-server:latest` (`26.10+`) | `8123:8123`<br>`9002:9000` | CSDL phân tích OLAP cột, hỗ trợ inverted full-text index cho traces. |
-| **`postgres`** | `postgres:16-alpine` | *Internal* | CSDL quan hệ lưu trữ Metadata: Users, Projects, RBAC, API Keys. |
-| **`redis`** | `redis:7-alpine` | *Internal* | Task queue (BullMQ) & caching trung gian. |
+| **`postgres`** | `postgres:16-alpine` | *Internal* | CSDL quan hệ lưu trữ Metadata: Users, Projects, RBAC (schema `public`) & bảng ngân sách Virtual Keys của LiteLLM (schema `litellm`). |
+| **`redis`** | `redis:7-alpine` | *Internal* | Bộ đếm Rate-Limit (RPM/TPM), trạng thái khóa Key tức thì & Task queue (BullMQ). |
 | **`minio`** | `cgr.dev/chainguard/minio:latest` | `9091:9091` (UI)<br>`9090:9000` (API) | S3-compatible Object Storage lưu trữ raw payloads, multimodal blobs & export files. |
 
 > [!NOTE]
+> * Cổng **LiteLLM Proxy** lắng nghe tại **`4000`** (cổng chính cho các Agent gọi vào để chịu sự kiểm soát ngân sách cứng và thu hồi Key tức thì).
 > * Cổng Web UI của Langfuse được map sang **`3100`** để tránh xung đột cổng `3000` với `yggdrasil-ontology-ui` của nhánh `01-nvidia-framework`.  
 > * Cổng Native AI Gateway lắng nghe tại **`3031`**.
 
 ---
 
-## 🛡️ Kiến Trúc "All-in-One" Langfuse AI Gateway Trong Yggdrasil
+## 🛡️ Kiến Trúc "Cầu Dao Kép" LiteLLM + Langfuse Trong Yggdrasil
 
-Thay vì gọi trực tiếp sang OpenAI, Anthropic hay NVIDIA NIM, toàn bộ lưu lượng của Agent và Pipeline RAG được hội tụ trực tiếp qua **Langfuse Native AI Gateway**:
+Sự kết hợp giữa **LiteLLM Proxy (`:4000`)** và **Langfuse (`:3031` / `:3100`)** giải quyết triệt để bài toán vận hành tài chính AI thực tế: **Langfuse làm Sổ cái Kế toán & Quản trị Prompt**, còn **LiteLLM làm Cầu dao Cắt điện Tự động (Hard Spend Cap & Key Revocation)**:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Agent as Agent / Ứng Dụng
+    actor Agent as Agent / Phòng Ban
+    participant LiteLLM as ⚡ LiteLLM Proxy (:4000)<br/>(Hard Spend Cap & Key Revocation)
+    participant Redis as Redis + Postgres<br/>(Budget & Rate-Limit State)
     participant GW as Langfuse AI Gateway (:3031, Rust)
     participant NIM as NVIDIA NIM / Model Provider
     participant CH as ClickHouse OLAP (:8123)
     participant UI as Langfuse Web Dashboard (:3100)
 
-    Agent->>GW: 1. Gửi request LLM (kèm Gateway Key: lf-gw-xxx)
-    GW->>GW: 2. Xác thực Key, giải mã Upstream Provider Key
-    GW->>NIM: 3. Chuyển tiếp Request tới NVIDIA NIM / OpenAI
-    NIM-->>GW: 4. Trả về Stream Completion & Token Usage
-    GW-->>Agent: 5. Trả kết quả về cho Agent (Overhead < 3ms)
-    GW-)CH: 6. Ghi ngầm Trace, Latency, Prompt & Cost vào ClickHouse
-    UI->>CH: 7. Báo cáo FinOps, Audit Log & Kích hoạt Auto-Evals
+    Agent->>LiteLLM: 1. Gửi request LLM (Virtual Key: sk-ygg-finance-xxx)
+    LiteLLM->>Redis: 2. Kiểm tra trạng thái Key (Blocked?), RPM/TPM & Hạn mức USD (max_budget)
+    alt Key đã bị thu hồi hoặc Vượt trần ngân sách USD
+        Redis-->>LiteLLM: Báo vượt trần / Key bị khóa!
+        LiteLLM-->>Agent: ❌ CẮT ĐIỆN TỨC THÌ (HTTP 401 KeyBlocked / 429 BudgetExceededError)
+        LiteLLM-)CH: Ghi log sự cố chặn ngân sách vào Langfuse ClickHouse
+    else Trong hạn mức cho phép
+        LiteLLM->>GW: 3. Chuyển tiếp Request hợp lệ
+        GW->>NIM: 4. Gọi Upstream NVIDIA NIM / OpenAI
+        NIM-->>GW: 5. Trả Stream Completion & Token Usage
+        GW-->>LiteLLM: 6. Trả kết quả (< 3ms overhead)
+        LiteLLM-->>Agent: 7. Trả kết quả cho Agent & Cộng dồn chi phí USD vào Postgres/Redis
+        LiteLLM-)CH: 8. Đồng bộ Trace, Latency, Prompt & Cost USD vào ClickHouse
+        UI->>CH: 9. Báo cáo FinOps, Audit Log & Kích hoạt Auto-Evals
+    end
 ```
 
 ---
@@ -96,45 +108,78 @@ sequenceDiagram
 * ✅ **Đo lường hiệu quả đồng tiền (ROI trên từng Prompt):** Gắn liền số tiền đã đốt với chất lượng câu trả lời (Auto-Evals), giúp sếp phát hiện ngay phòng ban nào đang đốt tiền vô ích cho những câu lệnh bị ảo giác để chỉnh sửa hoặc rollback Prompt tức thì (1 giây).
 * ✅ **Truy vấn sổ cái tức thì nhờ ClickHouse OLAP:** Kế toán bấm lọc báo cáo chi phí của cả quý hoặc tra cứu lịch sử kiểm toán (`audit_logs`) trên hàng triệu lượt gọi chỉ mất vài chục mili-giây.
 
+* ✅ **Cầu dao Cắt tiền Tự động & Thu hồi Key tức thì (LiteLLM Proxy `:4000`):** Khắc phục hoàn toàn điểm mù của Langfuse AI Gateway Beta bằng cách đặt **LiteLLM Proxy** đứng trước: ép trần ngân sách cứng (`max_budget` USD theo ngày/tháng), giới hạn RPM/TPM trên Redis, và cho phép cắt/khóa/thu hồi API Key của bất kỳ phòng ban hay nhân sự nào chỉ bằng 1 lệnh API (`/key/block`, `/key/delete`).
+
 ### Nhược điểm & Lưu ý thực tế (Cons):
-* ⚠️ **AI Gateway đang ở bản Beta (Chưa có cầu dao cắt tiền tự động):** Langfuse làm cực tốt vai trò "Kế toán trưởng" (đếm tiền, phân bổ chi phí, bắn cảnh báo), nhưng tính năng **Hard Spend Limit (tự động sập cầu dao ngắt điện khi phòng ban tiêu lố hạn mức USD)** vẫn đang nằm trên Roadmap. Muốn cắt điện tự động 100% ở production, hiện tại **bắt buộc phải chạy kèm 1 service riêng đứng trước (khuyên dùng LiteLLM Proxy)**.
 * ⚠️ **Bắt buộc đi kèm ClickHouse Engine:** Langfuse v4 yêu cầu bắt buộc phải có ClickHouse để chạy. Tuy nhiên, nếu ở tầng Data Platform bên dưới công ty đã có sẵn cụm ClickHouse rồi thì cực kỳ lợi: chỉ cần tạo thêm 1 database `langfuse` chung vào cụm đó là xong (không tốn thêm RAM nuôi container mới). Chỉ khi dựng lẻ độc lập từ đầu mới phải cõng thêm container ClickHouse (~4GB RAM).
 
 ---
 
-## 🚀 Hướng Dẫn Vận Hành Từng Bước
+## 🚀 Hướng Dẫn Vận Hành: Cấp Key, Khóa Trần Tiền & Cắt/Thu Hồi API Key
 
-### Bước 1: Khởi động toàn bộ cụm dịch vụ
+### Bước 1: Khởi động toàn bộ cụm dịch vụ (8 Containers)
 
 ```bash
-cd "ai platform/02-langfuse"
+cd "deploy/ai-platform/02-langfuse"
 docker compose up -d
 ```
 
-### Bước 2: Tạo tài khoản Admin
-1. Mở trình duyệt truy cập: **`http://localhost:3100`**
-2. Bấm **Sign Up** để tạo tài khoản admin đầu tiên.
-3. Tạo Organization (ví dụ: `Yggdrasil-Corp`) và Project đầu tiên.
+### Bước 2: Tạo tài khoản Admin & Cấu hình Langfuse (`:3100`)
+1. Mở trình duyệt truy cập: **`http://localhost:3100`** $\rightarrow$ **Sign Up** tạo tài khoản Admin.
+2. Tạo Organization (`Yggdrasil-Corp`) và Project đầu tiên $\rightarrow$ lấy cặp `LANGFUSE_PUBLIC_KEY` và `LANGFUSE_SECRET_KEY` điền vào `.env`.
+3. *(Tùy chọn)* Vào **AI Gateway** (`:3031`) $\rightarrow$ **Providers & Models** nạp API Key gốc của NVIDIA NIM / OpenAI.
 
-### Bước 3: Cấu hình AI Gateway & Nạp Provider Key
-1. Bấm vào tên Organization ở góc trên bên trái $\rightarrow$ chọn **AI Gateway**.
-2. Vào mục **Providers & Models** $\rightarrow$ bấm **Add Provider**:
-   * Dán API Key thật của NVIDIA NIM hoặc OpenAI vào đây.
-3. Vào mục **Gateway keys** $\rightarrow$ bấm **+ Create key**:
-   * Chọn loại **Service account key**.
-   * Đặt tên: `key-agent-ke-toan`.
-   * Gắn metadata: `{"team": "finance"}`.
-   * Sao chép key dạng `lf-gw-xxxxxxxxxxxx`.
-
-### Bước 4: Test gọi Model qua Gateway
+### Bước 3: Cấp Virtual API Key kèm Trần Ngân Sách Cứng (`max_budget`) qua LiteLLM (`:4000`)
+Dùng `LITELLM_MASTER_KEY` để cấp cho Phòng Kế toán 1 chiếc chìa khóa ảo giới hạn cứng **$5.00 USD / tháng** và tối đa **30 requests/phút**:
 
 ```bash
-curl http://localhost:3031/v1/chat/completions \
+curl -X POST http://localhost:4000/key/generate \
+  -H "Authorization: Bearer sk-yggdrasil-master-admin-2026" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer lf-gw-xxxxxxxxxxxx" \
   -d '{
-    "model": "gpt-4o-mini",
-    "messages": [{"role": "user", "content": "Xin chào, kiểm tra kết nối AI Gateway!"}]
+    "key_alias": "key-agent-ke-toan",
+    "team_id": "finance-department",
+    "max_budget": 5.0,
+    "budget_duration": "30d",
+    "rpm_limit": 30,
+    "tpm_limit": 50000,
+    "metadata": {"department": "finance", "owner": "accountant_chief"}
+  }'
+# Trả về: {"key": "sk-ygg-xxxxxxxxxxxxxxxx", "max_budget": 5.0, ...}
+```
+
+### Bước 4: Cắt / Khóa Tạm Thời hoặc Thu Hồi Vĩnh Viễn API Key Trong 1 Giây
+Khi phát hiện Agent bị lỗi lặp vô hạn hoặc nhân sự nghỉ việc, Admin cắt quyền truy cập ngay lập tức mà **không ảnh hưởng đến API Key gốc**:
+
+```bash
+# 1. Khóa tạm thời (Block Key ngay lập tức trên Redis/Postgres):
+curl -X POST http://localhost:4000/key/block \
+  -H "Authorization: Bearer sk-yggdrasil-master-admin-2026" \
+  -H "Content-Type: application/json" \
+  -d '{"key": "sk-ygg-xxxxxxxxxxxxxxxx"}'
+
+# 2. Mở khóa lại Key (Unblock Key):
+curl -X POST http://localhost:4000/key/unblock \
+  -H "Authorization: Bearer sk-yggdrasil-master-admin-2026" \
+  -H "Content-Type: application/json" \
+  -d '{"key": "sk-ygg-xxxxxxxxxxxxxxxx"}'
+
+# 3. Thu hồi & Xóa vĩnh viễn Key (Revoke / Delete Key):
+curl -X POST http://localhost:4000/key/delete \
+  -H "Authorization: Bearer sk-yggdrasil-master-admin-2026" \
+  -H "Content-Type: application/json" \
+  -d '{"keys": ["sk-ygg-xxxxxxxxxxxxxxxx"]}'
+```
+
+### Bước 5: Test gọi Model qua Chốt chặn LiteLLM (`:4000`)
+
+```bash
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer sk-ygg-xxxxxxxxxxxxxxxx" \
+  -d '{
+    "model": "yggdrasil-default-llm",
+    "messages": [{"role": "user", "content": "Xin chào, kiểm tra cầu dao FinOps LiteLLM + Langfuse!"}]
   }'
 ```
 
@@ -143,22 +188,26 @@ curl http://localhost:3031/v1/chat/completions \
 ## ⚡ Các Lệnh Kiểm Tra Sức Khỏe Nhanh (Smoke Test)
 
 ```bash
-# 1. Kiểm tra trạng thái 7 container
-docker ps --filter name=yggdrasil-langfuse
+# 1. Kiểm tra trạng thái 8 container
+docker ps --filter name=yggdrasil-
 
-# 2. Kiểm tra AI Gateway Health
+# 2. Kiểm tra LiteLLM Proxy Health (Cầu dao FinOps)
+curl http://localhost:4000/health/liveliness
+# Mong đợi: "I'm alive!"
+
+# 3. Kiểm tra AI Gateway Health
 curl http://localhost:3031/health
 # Mong đợi: {"status":"ok"}
 
-# 3. Kiểm tra Ingestion API của Langfuse Web
+# 4. Kiểm tra Ingestion API của Langfuse Web
 curl http://localhost:3100/api/public/health
 # Mong đợi: {"status":"OK","version":"4.77.0"}
 
-# 4. Kiểm tra ClickHouse OLAP
+# 5. Kiểm tra ClickHouse OLAP
 curl http://localhost:8123/ping
 # Mong đợi: Ok.
 
-# 5. Xem danh sách bảng ClickHouse đã khởi tạo
+# 6. Xem danh sách bảng ClickHouse đã khởi tạo
 docker exec yggdrasil-langfuse-clickhouse clickhouse-client -u clickhouse --password clickhouse_secret_password --query "SHOW TABLES;"
 ```
 

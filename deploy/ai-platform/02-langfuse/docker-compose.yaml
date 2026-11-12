@@ -8,6 +8,9 @@
 # 4. postgres: PostgreSQL 16 lưu trữ metadata, users, prompts, RBAC
 # 5. redis: Redis 7 cho caching & background message queue
 # 6. minio: S3-compatible Object Storage lưu trữ raw payload & attachments
+# 7. ai-gateway: Langfuse Native AI Gateway (Rust LLM Proxy :3031)
+# 8. litellm-proxy: LiteLLM Proxy (:4000) — Cầu dao Cắt tiền Tự động (Hard Spend Cap),
+#    Rate-Limiting (RPM/TPM) & Cấp/Thu hồi Virtual API Key tức thì cho từng Phòng ban
 # ==============================================================================
 
 name: yggdrasil-langfuse
@@ -251,3 +254,49 @@ services:
       timeout: 3s
       retries: 5
       start_period: 3s
+
+  # ============================================================================
+  # 8. LITELLM PROXY — CẦU DAO CẮT TIỀN TỰ ĐỘNG & THU HỒI API KEY (:4000)
+  # ============================================================================
+  litellm-proxy:
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: yggdrasil-litellm-proxy
+    restart: unless-stopped
+    networks:
+      - langfuse-net
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "4"]
+    ports:
+      - "${LITELLM_PORT:-4000}:4000"
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-yggdrasil-master-admin-2026}
+      LITELLM_SALT_KEY: ${SALT:-yggdrasil_langfuse_salt_key_2026}
+      # Dùng chung container Postgres nhưng tách schema riêng `litellm` để không đụng bảng của Langfuse
+      LITELLM_DATABASE_URL: postgresql://${POSTGRES_USER:-langfuse}:${POSTGRES_PASSWORD:-langfuse_secret_password}@postgres:5432/${POSTGRES_DB:-langfuse}?schema=litellm
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      # Tự động đẩy toàn bộ Trace, Cost USD & lỗi bị cắt ngân sách sang Langfuse
+      LANGFUSE_HOST: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-pk-lf-local-test}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-sk-lf-local-test}
+      # Upstream Provider Keys / Langfuse AI Gateway
+      UPSTREAM_LLM_API_BASE: ${UPSTREAM_LLM_API_BASE:-http://ai-gateway:3031/v1}
+      UPSTREAM_LLM_API_KEY: ${UPSTREAM_LLM_API_KEY:-lf-gw-default-upstream-key}
+      DEFAULT_LLM_MODEL: ${DEFAULT_LLM_MODEL:-deepseek-chat}
+      NVIDIA_NIM_API_BASE: ${NVIDIA_NIM_API_BASE:-https://integrate.api.nvidia.com/v1}
+      NVIDIA_API_KEY: ${NVIDIA_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      langfuse-web:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:4000/health/liveliness', timeout=3).status == 200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s

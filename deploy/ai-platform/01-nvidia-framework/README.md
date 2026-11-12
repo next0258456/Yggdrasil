@@ -1,6 +1,6 @@
 # 01. NVIDIA NeMo Framework (`01-nvidia-framework`)
 
-> **Triết lý:** Chuẩn Enterprise chính hãng của NVIDIA. Tích hợp các trụ cột mã nguồn mở chính thức của NVIDIA để tạo nên một hệ thống **Agentic Analytics & Semantic Graph Platform** hoàn chỉnh: Điều phối nhóm tác tử (`NeMo-Agent-Toolkit`), Runtime middleware (`NeMo-Relay`), Tầng ngữ nghĩa Text-to-SQL (`auto-ontology`), Trích xuất văn bản SOP (`NeMo-Retriever`), Tác tử tự hành (`NemoClaw` / `OpenShell`) và Cổng kiểm định kỹ năng Agent (`SkillEvaluator`).
+> **Triết lý:** Chuẩn Enterprise chính hãng của NVIDIA. Tích hợp các trụ cột mã nguồn mở chính thức của NVIDIA để tạo nên một hệ thống **Multimodal Agentic Analytics & Semantic Graph Platform** hoàn chỉnh: Giao diện giọng nói thời gian thực (`nemotron-voice-agent` với kiến trúc phân thân `Talker LLM / Thinker LLM` trên `Pipecat`), Điều phối nhóm tác tử (`NeMo-Agent-Toolkit`), Runtime middleware (`NeMo-Relay`), Tầng ngữ nghĩa Text-to-SQL (`auto-ontology`), Trích xuất văn bản SOP (`NeMo-Retriever`), Tác tử tự hành (`NemoClaw` / `OpenShell`) và Cổng kiểm định kỹ năng Agent (`SkillEvaluator`).
 
 ---
 
@@ -8,11 +8,18 @@
 
 ```mermaid
 flowchart TD
-    User["👔 Người Dùng / Kênh Chat (Telegram, Slack, Web UI)"] --> NemoClaw
+    User["👔 Người Dùng / Khách Hàng<br/>(Chat Text hoặc Đàm Thoại Voice WebRTC/WebSocket)"]
+    User -->|"Kênh Text"| NemoClaw
+    User <-->|"Kênh Voice (:7860 WebRTC / WS /v1/realtime)"| VoiceAgent
+
+    subgraph Voice_Gateway ["0. REAL-TIME VOICE GATEWAY (:7860 - PIPECAT)"]
+        VoiceAgent["🎙️ nemotron-voice-agent<br/>• Talker LLM (Reasoning=Off, <200ms phản xạ & câu đệm)<br/>• Nemotron Streaming ASR + Magpie Multilingual TTS<br/>• Silero VAD + Smart Turn + Barge-in (InterruptionFrame)"]
+    end
 
     subgraph Autonomous_Worker ["1. AUTONOMOUS AGENT WORKER & SANDBOX (:7681)"]
-        NemoClaw["🤖 NVIDIA NemoClaw<br/>(OpenClaw Agentic Loop + OpenShell Sandbox)"]
+        NemoClaw["🤖 NVIDIA NemoClaw / Thinker Agent<br/>(OpenClaw Agentic Loop + OpenShell Sandbox)"]
         Relay["🛡️ NeMo-Relay<br/>(Middleware: Kiểm soát PII, Token, chặn Loop)"]
+        VoiceAgent -->|"call_backend / cancel_backend"| Relay
         NemoClaw <--> Relay
     end
 
@@ -28,11 +35,12 @@ flowchart TD
 
     subgraph Observability ["4. GIÁM SÁT & TRACING (:6006)"]
         Phoenix["📊 Arize Phoenix<br/>(Prompt CMS, Playground, OTLP Traces & Evals)"]
+        VoiceAgent -.->|OTLP Spans| Phoenix
         NemoClaw -.->|OTLP Spans| Phoenix
         Ontology -.->|OTLP Spans| Phoenix
     end
 
-    Postgres --> Output["📁 File Báo Cáo / Excel (./output) gửi cho User"]
+    Postgres --> Output["📁 File Báo Cáo / Excel (./output) hoặc Luồng Giọng Nói trả về User"]
     VectorStore --> Output
 ```
 
@@ -100,7 +108,9 @@ Chi tiết cấu hình và các chế độ chạy xem tại **[DEPLOYMENT.md](.
 | **`vectordb`** | `:7671` | LanceDB Vector Store lưu trữ và truy xuất embedding. |
 | **`phoenix`** | `:6006` / `:4317` | Arize Phoenix UI (Prompt CMS, Playground, Evals) và OTLP Collector thu thập trace. |
 | **`nemoclaw`** | `:7681` | Autonomous Always-on Agent Worker (OpenShell Sandbox & OpenClaw Loop). |
+| **`nemotron-voice-agent`** | `:7860` | Cổng đàm thoại thời gian thực (Pipecat WebRTC/WebSocket + `/v1/realtime`, kiến trúc phân thân `Talker LLM / Thinker LLM`, Silero VAD & Barge-in). |
 | **`nim-page-elements` / `nim-table-structure` / `nim-ocr`** | `:8001`–`:8003` | *(Profile `local-vision`)* Bộ 3 container NIM tự host `nemotron-page-elements-v3`, `nemotron-table-structure-v1` & `nemotron-ocr-v2` tại chỗ. |
+| **`nim-asr-streaming` / `nim-tts-magpie`** | `:9001` (`:50152`) / `:9000` (`:50151`) | *(Profile `local-voice`)* Bộ 2 container NIM tự host `nemotron-asr-streaming` & `magpie-tts-multilingual` qua gRPC/HTTP. |
 
 ---
 
@@ -110,6 +120,7 @@ Bảng tra cứu nhanh các module nguồn mở chính thức từ NVIDIA đư�
 
 | Linh Kiện | Kho Mã Nguồn | Giải Thích Ngắn Gọn |
 | :--- | :--- | :--- |
+| **Nemotron Voice Agent** | [NVIDIA-AI-Blueprints/nemotron-voice-agent](https://github.com/NVIDIA-AI-Blueprints/nemotron-voice-agent) | Cổng giao tiếp giọng nói thời gian thực (<200ms phản xạ) xây dựng trên `Pipecat`, tích hợp sẵn VAD Barge-in (`InterruptionFrame`), kiến trúc Cascaded `Talker LLM / Thinker LLM`, Nemotron Streaming ASR & Magpie Multilingual TTS. |
 | **NeMo-Agent-Toolkit** | [NVIDIA/NeMo-Agent-Toolkit](https://github.com/NVIDIA/NeMo-Agent-Toolkit) | Bộ khung điều phối đa tác tử (Orchestration), phân vai cho nhóm Agent (Scout, SQL Specialist, SOP Reader). |
 | **NeMo-Relay** | [NVIDIA/NeMo-Relay](https://github.com/NVIDIA/NeMo-Relay) | Lớp Interceptor/Middleware chặn vòng đời Agent (`on_tool_start`, `on_llm_call`), kiểm soát timeout, PII và đếm token. Cung cấp plugin chính thức `nemo-relay-openclaw`. |
 | **Auto-Ontology** | [NVIDIA/auto-ontology](https://github.com/NVIDIA/auto-ontology) | Tầng đồ thị ngữ nghĩa (Semantic Graph) sinh câu lệnh SQL tất định 100% cho dữ liệu có cấu trúc, tích hợp sẵn MCP Server. |
