@@ -43,5 +43,17 @@ deploy/ai-platform/01-nvidia-framework/NeMo-Relay/
 deploy/ai-platform/01-nvidia-framework/NeMo-Retriever/
 deploy/ai-platform/01-nvidia-framework/nemotron-voice-agent/
 deploy/ai-platform/01-nvidia-framework/SkillEvaluator/
-deploy/ai-platform/01-nvidia-framework/output/*
-!deploy/ai-platform/01-nvidia-framework/output/.gitkeep
+deploy/ai-platform/01-nvidia-framework/output/
+
+# Model weights & Checkpoints
+*.pt
+*.bin
+*.onnx
+*.safetensors*
+!deploy/ai-platform/01-nvidia-framework/output/
+
+# Model weights & Checkpoints
+*.pt
+*.bin
+*.onnx
+*.safetensors.gitkeep

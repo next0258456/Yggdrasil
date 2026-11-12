@@ -114,8 +114,12 @@ docker compose --profile local-vision up -d
 1. **Phương án 1 — "Fast-to-Market" (Triển khai ngay — Khuyên dùng):**
    - Giữ nguyên 2 model **`nemotron-page-elements-v3`** và **`nemotron-table-structure-v1`** của NVIDIA để cắt layout và bổ lưới ô cell.
    - Thay thế bước đọc chữ trong cell bằng **PaddleOCR Tiếng Việt (`lang='vi'`)** chạy local (nặng ~10MB, mã nguồn mở, hỗ trợ chuẩn 100% tiếng Việt có dấu).
-2. **Phương án 2 — "Pure Vendor Tier" (Thuần NVIDIA — Sẽ có hỗ trợ sau):**
+2. **Phương án 2 — "Pure Vendor Tier" (Thuần NVIDIA — Đã triển khai sẵn pipeline):**
    - Giữ thuần 100% stack NVIDIA, không train lại từ đầu cả 83.8M tham số.
    - **Đóng băng (Freeze):** `Detector` (45.4M) và `Relational model` (2.3M) vì chúng đã làm rất tốt khâu dò vị trí dòng chữ và thứ tự đọc.
-   - **Chỉ Fine-tune:** Con **`Recognizer` (36.1M)**: Thêm 67 ký tự tiếng Việt vào `charset.txt`, đóng băng CNN Encoder (9.8M) và chỉ train lại Transformer Decoder + Linear Head (khoảng 26.3M tham số trainable với CTCLoss). Phần này sẽ có kịch bản và tài liệu hỗ trợ sau.
+   - **Chỉ Fine-tune:** Con **`Recognizer` (36.1M)**: Thêm 67 ký tự tiếng Việt vào `charset.txt`, đóng băng CNN Encoder (9.8M) và chỉ train lại Transformer Decoder + Linear Head (khoảng 26.3M tham số trainable với CTCLoss).
+   - 👉 *Bộ mã nguồn & script huấn luyện hoàn chỉnh đã được đóng gói sẵn tại:* [`ocr-finetune/`](./ocr-finetune/README.md). Chạy lệnh:
+     ```bash
+     python deploy/ai-platform/01-nvidia-framework/ocr-finetune/train_recognizer.py --epochs 10 --samples 2000 --batch-size 16
+     ```
 
