@@ -92,7 +92,7 @@ Vì được thiết kế để tiết kiệm tối đa ở Ngày 1 (`v0.1`), nh
    * Việc ép Model chỉ được viết 1 câu SQL rồi trả thẳng file cho người dùng giúp hệ thống cực kỳ an toàn và không tốn RAM, nhưng đồng thời **vô hiệu hóa khả năng phân tích sâu nhiều bước** (Model không được nhìn kết quả bước 1 để tự truy vấn tiếp bước 2 tìm nguyên nhân).
 4. **Giới hạn của cặp điều phối `n8n + Airflow` và `DuckDB In-Memory`:**
    * Khi lỗi xảy ra phải mở cả `n8n` lẫn `Airflow` để dò log; khi dữ liệu vượt ngưỡng `100GB – 500GB` hoặc truy vấn Ad-hoc dồn dập làm mất tác dụng của Redis Cache thì DuckDB In-Memory sẽ nghẽn.
-   * 👉 *Hướng thay thế ở Ngày 10:* Gộp điều phối về **Windmill.dev (Rust)** ([`ADR 0001`](../../docs/adrs/0001-tech-stack-selection.md)) và nâng tầng OLAP lên **ClickHouse** ([`01_OLAP_Scaling_Strategy.md`](../../docs/guides/01_OLAP_Scaling_Strategy.md)).
+   * 👉 *Hướng thay thế ở Ngày 10:* Gộp điều phối về **Windmill.dev (Rust)** ([`ADR 0001`](../../../docs/adrs/0001-tech-stack-selection.md)) và nâng tầng OLAP lên **ClickHouse** ([`01_OLAP_Scaling_Strategy.md`](../../../docs/guides/01_OLAP_Scaling_Strategy.md)).
 
 ---
 
@@ -114,8 +114,8 @@ Vì được thiết kế để tiết kiệm tối đa ở Ngày 1 (`v0.1`), nh
 ## 5. Tài Liệu Chi Tiết Trong Repo
 
 * **Lộ trình Bootstrapping & Thời gian hoàn thành (Ngày 1 ➔ Ngày 10):** [`ROADMAP.md`](./ROADMAP.md)
-* **Tóm tắt nhanh không lý thuyết:** [`rag+mimir/docs/00_quickstart_without_theory.md`](../../rag+mimir/docs/00_quickstart_without_theory.md)
-* **Thiết kế Tầng 4 (Obsidian `DATA_TRAP` & Hybrid Search SOP):** [`docs/architecture/04_Knowledge_Semantic_Layer_Design.md`](../../docs/architecture/04_Knowledge_Semantic_Layer_Design.md) & [`rag+mimir/docs/02_data_blind_semantic_layer.md`](../../rag+mimir/docs/02_data_blind_semantic_layer.md)
-* **Thiết kế Tầng 5 (Zalo Webview, Google Sheet Kill-Switch & Single-Hop):** [`docs/architecture/05_AI_Gateway_Layer_Design.md`](../../docs/architecture/05_AI_Gateway_Layer_Design.md) & [`rag+mimir/docs/03_cognitive_gateway_and_dual_track.md`](../../rag+mimir/docs/03_cognitive_gateway_and_dual_track.md)
-* **Post-Mortem cắt bỏ `Hyper-Scale Library` & Benchmark 7 Task MTEB Finance:** [`rag+mimir/docs/05_deescalation_and_fin_benchmarks.md`](../../rag+mimir/docs/05_deescalation_and_fin_benchmarks.md)
-* **Lộ trình thay thế nâng cấp ở Ngày 10 (`ADR 0001` & `OLAP Scaling`):** [`docs/adrs/0001-tech-stack-selection.md`](../../docs/adrs/0001-tech-stack-selection.md) & [`docs/guides/01_OLAP_Scaling_Strategy.md`](../../docs/guides/01_OLAP_Scaling_Strategy.md)
+* **Tóm tắt nhanh không lý thuyết:** [`rag+mimir/docs/00_quickstart_without_theory.md`](../../../rag+mimir/docs/00_quickstart_without_theory.md)
+* **Thiết kế Tầng 4 (Obsidian `DATA_TRAP` & Hybrid Search SOP):** [`docs/architecture/04_Knowledge_Semantic_Layer_Design.md`](../../../docs/architecture/04_Knowledge_Semantic_Layer_Design.md) & [`rag+mimir/docs/02_data_blind_semantic_layer.md`](../../../rag+mimir/docs/02_data_blind_semantic_layer.md)
+* **Thiết kế Tầng 5 (Zalo Webview, Google Sheet Kill-Switch & Single-Hop):** [`docs/architecture/05_AI_Gateway_Layer_Design.md`](../../../docs/architecture/05_AI_Gateway_Layer_Design.md) & [`rag+mimir/docs/03_cognitive_gateway_and_dual_track.md`](../../../rag+mimir/docs/03_cognitive_gateway_and_dual_track.md)
+* **Post-Mortem cắt bỏ `Hyper-Scale Library` & Benchmark 7 Task MTEB Finance:** [`rag+mimir/docs/05_deescalation_and_fin_benchmarks.md`](../../../rag+mimir/docs/05_deescalation_and_fin_benchmarks.md)
+* **Lộ trình thay thế nâng cấp ở Ngày 10 (`ADR 0001` & `OLAP Scaling`):** [`docs/adrs/0001-tech-stack-selection.md`](../../../docs/adrs/0001-tech-stack-selection.md) & [`docs/guides/01_OLAP_Scaling_Strategy.md`](../../../docs/guides/01_OLAP_Scaling_Strategy.md)
