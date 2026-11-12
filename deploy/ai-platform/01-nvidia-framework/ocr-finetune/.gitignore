@@ -1,0 +1,7 @@
+
+data/
+*.parquet
+nemotron-ocr-v2-src/
+outputs/*.png
+*.pth
+*.pt
