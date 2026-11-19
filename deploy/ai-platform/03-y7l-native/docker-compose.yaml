@@ -1,0 +1,141 @@
+# ==============================================================================
+# YGGDRASIL DATA PLATFORM — 03-Y7L-NATIVE (N8N-CENTRIC BOOTSTRAP ENGINE)
+# ==============================================================================
+# Chế độ mặc định (Day-1 Lightweight):
+#   docker compose up -d
+#   -> Khởi chạy sidecar `y7l-tools` (:8300), kết nối thẳng qua `host.docker.internal`
+#      tới `n8n (:5678)`, `redis (:6379)`, `litellm-proxy (:4000)` đang chạy sẵn.
+#
+# Chế độ tự lập hoàn toàn (Server mới chưa có n8n/Redis/Postgres/LiteLLM):
+#   docker compose --profile standalone up -d
+# ==============================================================================
+
+name: yggdrasil-y7l-native
+
+networks:
+  y7l-net:
+    driver: bridge
+
+volumes:
+  y7l_pg_data:
+  y7l_redis_data:
+  y7l_n8n_data:
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. THIN TRACK-B SIDECAR (ALWAYS ON)
+  # ----------------------------------------------------------------------------
+  y7l-tools:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: yggdrasil-y7l-tools:v0.1
+    container_name: yggdrasil-y7l-tools
+    restart: unless-stopped
+    networks:
+      - y7l-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${Y7L_TOOLS_PORT:-8300}:8300"
+    environment:
+      Y7L_TOOLS_PORT: "8300"
+      OBSIDIAN_VAULT_PATH: /app/vault
+      DATA_DIR: /app/data
+      JWT_SECRET: ${JWT_SECRET:-y7l_dev_jwt_secret_change_me_2026}
+      JWT_TTL_SECONDS: ${JWT_TTL_SECONDS:-36000}
+      REDIS_URL: ${REDIS_URL:-redis://host.docker.internal:6379/0}
+      SUPERSET_URL: ${SUPERSET_URL:-}
+      LLM_API_BASE: ${LLM_API_BASE:-http://host.docker.internal:4000/v1}
+      LLM_API_KEY: ${LLM_API_KEY:-sk-yggdrasil-master-admin-2026}
+      LLM_MODEL: ${LLM_MODEL:-yggdrasil-default-llm}
+      EMBED_MODEL: ${EMBED_MODEL:-text-embedding-3-small}
+      STT_MODEL: ${STT_MODEL:-whisper-1}
+      TTS_VOICE: ${TTS_VOICE:-vi-VN-HoaiMyNeural}
+    volumes:
+      - ./vault:/app/vault:ro
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8300/health', timeout=3).status == 200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ----------------------------------------------------------------------------
+  # 2. STANDALONE PROFILE (CHỈ BẬT KHI CHƯA CÓ N8N / POSTGRES / REDIS / LITELLM)
+  # ----------------------------------------------------------------------------
+  y7l-postgres:
+    profiles: [standalone]
+    image: pgvector/pgvector:pg17
+    container_name: yggdrasil-y7l-postgres
+    restart: unless-stopped
+    networks:
+      - y7l-net
+    ports:
+      - "${Y7L_PG_PORT:-5434}:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-y7l}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-y7l_secret_password}
+      POSTGRES_DB: ${POSTGRES_DB:-y7l_rag}
+    volumes:
+      - y7l_pg_data:/var/lib/postgresql/data
+      - ./db/init_sop_hybrid.sql:/docker-entrypoint-initdb.d/01_init_sop_hybrid.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-y7l} -d ${POSTGRES_DB:-y7l_rag}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  y7l-redis:
+    profiles: [standalone]
+    image: redis:7-alpine
+    container_name: yggdrasil-y7l-redis
+    restart: unless-stopped
+    networks:
+      - y7l-net
+    ports:
+      - "${Y7L_REDIS_PORT:-6380}:6379"
+    volumes:
+      - y7l_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  y7l-n8n:
+    profiles: [standalone]
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: yggdrasil-y7l-n8n
+    restart: unless-stopped
+    networks:
+      - y7l-net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${Y7L_N8N_PORT:-5679}:5678"
+    environment:
+      N8N_HOST: localhost
+      N8N_PORT: "5678"
+      GENERIC_TIMEZONE: Asia/Ho_Chi_Minh
+    volumes:
+      - y7l_n8n_data:/home/node/.n8n
+      - ./n8n-workflows:/opt/y7l-workflows:ro
+
+  y7l-litellm:
+    profiles: [standalone]
+    image: ghcr.io/berriai/litellm:main-stable
+    container_name: yggdrasil-y7l-litellm
+    restart: unless-stopped
+    networks:
+      - y7l-net
+    command: ["--config", "/app/config.yaml", "--port", "4000", "--num_workers", "2"]
+    ports:
+      - "${Y7L_LITELLM_PORT:-4001}:4000"
+    environment:
+      LITELLM_MASTER_KEY: ${LLM_API_KEY:-sk-yggdrasil-master-admin-2026}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro

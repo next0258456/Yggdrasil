@@ -1,0 +1,301 @@
+{
+  "name": "Y7L 05 - HR Master IAM Google Sheet & 2-Tier Kill-Switch",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "wf05-schedule-1m",
+      "name": "Poll_Every_1_Minute",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [120, 180]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "y7l-iam-sync",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "wf05-webhook-sync",
+      "name": "Webhook_Manual_IAM_Sync",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 380],
+      "webhookId": "y7l-iam-sync",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.Y7L_IAM_SHEET_ID || 'REPLACE_WITH_GOOGLE_SHEET_ID' }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "HR_Master_IAM"
+        },
+        "range": "HR_Master_IAM!A1:Z1000",
+        "options": {}
+      },
+      "id": "wf05-read-iam-sheet",
+      "name": "GoogleSheets_Read_HR_IAM",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [380, 280],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map((item) => item.json);\nreturn rows.map((r) => {\n  const status = String(r.status || 'Active').trim();\n  const revokeFlag = r.revoke_session === true || String(r.revoke_session || '').toUpperCase() === 'TRUE';\n  let action = 'provision';\n  if (status.toLowerCase() === 'inactive') {\n    action = 'tier2_inactive';\n  } else if (revokeFlag) {\n    action = 'tier1_revoke';\n  }\n  return {\n    json: {\n      action,\n      username: String(r.username || '').trim(),\n      chat_user_id: String(r.chat_user_id || r.username || '').trim(),\n      department: String(r.department || 'general').trim(),\n      region: String(r.region || 'North').trim(),\n      role: String(r.role || 'sales').trim()\n    }\n  };\n});"
+      },
+      "id": "wf05-classify-action",
+      "name": "Classify_IAM_Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 280],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "Tier2_Inactive",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "iam-tier2",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "tier2_inactive"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "Tier1_Revoke",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "iam-tier1",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "tier1_revoke"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "Provision_Active",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "iam-provision",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "provision"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf05-switch-iam",
+      "name": "Switch_KillSwitch_Tier",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [820, 280]
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ 'y7l:session:' + $json.chat_user_id }}"
+      },
+      "id": "wf05-tier2-redis-del",
+      "name": "Tier2_Redis_Delete_Session",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1080, 120],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://host.docker.internal:8300/auth/users/' + $('Switch_KillSwitch_Tier').item.json.username + '/deactivate' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_user_id: $('Switch_KillSwitch_Tier').item.json.chat_user_id }) }}",
+        "options": {}
+      },
+      "id": "wf05-tier2-deactivate",
+      "name": "Tier2_Deactivate_IAM_User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1320, 120],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "={{ 'y7l:session:' + $json.chat_user_id }}"
+      },
+      "id": "wf05-tier1-redis-del",
+      "name": "Tier1_Redis_Delete_Session",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1080, 280],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.Y7L_IAM_SHEET_ID || 'REPLACE_WITH_GOOGLE_SHEET_ID' }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "HR_Master_IAM"
+        },
+        "range": "HR_Master_IAM!A1:F1000",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "username": {
+              "__rl": true,
+              "mode": "expression",
+              "value": "={{ $('Switch_KillSwitch_Tier').item.json.username }}"
+            },
+            "revoke_session": "FALSE"
+          },
+          "matchingColumns": ["username"],
+          "schema": [
+            {
+              "id": "username",
+              "displayName": "username",
+              "required": false,
+              "defaultMatch": true,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string"
+            },
+            {
+              "id": "revoke_session",
+              "displayName": "revoke_session",
+              "required": false,
+              "defaultMatch": false,
+              "canBeUsedToMatch": true,
+              "display": true,
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf05-tier1-reset-sheet",
+      "name": "Tier1_Reset_Sheet_Checkbox",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [1320, 280],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8300/auth/users/provision",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ username: $json.username, department: $json.department, region: $json.region, role: $json.role, is_active: true }) }}",
+        "options": {}
+      },
+      "id": "wf05-provision-user",
+      "name": "Provision_Active_User",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1080, 440],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Poll_Every_1_Minute": {
+      "main": [[{"node": "GoogleSheets_Read_HR_IAM", "type": "main", "index": 0}]]
+    },
+    "Webhook_Manual_IAM_Sync": {
+      "main": [[{"node": "GoogleSheets_Read_HR_IAM", "type": "main", "index": 0}]]
+    },
+    "GoogleSheets_Read_HR_IAM": {
+      "main": [[{"node": "Classify_IAM_Action", "type": "main", "index": 0}]]
+    },
+    "Classify_IAM_Action": {
+      "main": [[{"node": "Switch_KillSwitch_Tier", "type": "main", "index": 0}]]
+    },
+    "Switch_KillSwitch_Tier": {
+      "main": [
+        [{"node": "Tier2_Redis_Delete_Session", "type": "main", "index": 0}],
+        [{"node": "Tier1_Redis_Delete_Session", "type": "main", "index": 0}],
+        [{"node": "Provision_Active_User", "type": "main", "index": 0}]
+      ]
+    },
+    "Tier2_Redis_Delete_Session": {
+      "main": [[{"node": "Tier2_Deactivate_IAM_User", "type": "main", "index": 0}]]
+    },
+    "Tier1_Redis_Delete_Session": {
+      "main": [[{"node": "Tier1_Reset_Sheet_Checkbox", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

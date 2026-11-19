@@ -1,0 +1,503 @@
+{
+  "name": "Y7L 01 - Chat & Minimal Voice Memo Entrypoint",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "y7l-chat",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf01-webhook-chat",
+      "name": "Webhook_Chat_Or_Voice",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 300],
+      "webhookId": "y7l-chat",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json.body || $input.first().json;\nconst chatUserId = String(input.chat_user_id || input.user_id || 'anonymous');\nconst prompt = String(input.prompt || input.text || '').trim();\nconst isVoice = Boolean(input.is_voice || input.audio_url || input.audio_base64);\nconst exportFormat = String(input.export_format || 'csv').toLowerCase();\nreturn [{ json: { chat_user_id: chatUserId, prompt, is_voice: isVoice, export_format: exportFormat, audio_url: input.audio_url || '' } }];"
+      },
+      "id": "wf01-normalize-inbound",
+      "name": "Normalize_Inbound",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [340, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-voice-input",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.is_voice && !$json.prompt }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf01-if-stt",
+      "name": "IF_Needs_STT",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [560, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8300/voice/stt",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf01-http-stt",
+      "name": "Call_Sidecar_Whisper_STT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [780, 160],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Normalize_Inbound').first().json;\nconst stt = $input.first().json;\nreturn [{ json: { ...prev, prompt: String(stt.text || prev.prompt || '').trim() } }];"
+      },
+      "id": "wf01-merge-stt",
+      "name": "Merge_STT_Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 160],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "={{ 'y7l:session:' + $json.chat_user_id }}",
+        "propertyName": "jwt_token",
+        "keyType": "string",
+        "options": {}
+      },
+      "id": "wf01-redis-get-jwt",
+      "name": "Redis_Get_10h_JWT",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1220, 300],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-jwt-present",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.jwt_token || '' }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf01-if-authenticated",
+      "name": "IF_Authenticated",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1440, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'login_required', message: 'Phiên làm việc đã hết hạn hoặc chưa đăng nhập. Vui lòng bấm link Webview dưới đây để xác thực JWT 10 tiếng.', webview_login_url: 'http://localhost:5678/webhook/y7l-login?uid=' + ($json.chat_user_id || 'anonymous') }) }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "id": "wf01-respond-login",
+      "name": "Respond_Login_Required",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1680, 480]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-yggdrasil-master-admin-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'yggdrasil-default-llm', temperature: 0, messages: [{ role: 'system', content: 'Phân loại câu hỏi thành ĐÚNG 1 chuỗi JSON: {\"intent\": \"KPI|SQL|SOP\", \"metric_name\": \"net_revenue_by_region|monthly_revenue|top_customers|order_count_summary|null\"}. KPI dùng cho doanh thu theo khu vực/tháng/top khách hàng/tổng đơn chuẩn; SQL dùng cho truy vấn số liệu tự do; SOP dùng cho quy trình/chính sách.' }, { role: 'user', content: $json.prompt }] }) }}",
+        "options": {}
+      },
+      "id": "wf01-llm-intent-router",
+      "name": "LLM_Intent_Router",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1680, 220],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const authCtx = $('Redis_Get_10h_JWT').first().json;\nconst llmResp = $input.first().json;\nconst choices = Array.isArray(llmResp.choices) ? llmResp.choices : [];\nconst raw = (choices[0] && choices[0].message && choices[0].message.content) ? choices[0].message.content : '';\nlet parsed = { intent: 'SOP', metric_name: null };\ntry {\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  const p = String(authCtx.prompt || '').toLowerCase();\n  if (p.includes('quy trình') || p.includes('chính sách') || p.includes('phụ cấp') || p.includes('hoàn đơn')) {\n    parsed = { intent: 'SOP', metric_name: null };\n  } else if (p.includes('khu vực')) {\n    parsed = { intent: 'KPI', metric_name: 'net_revenue_by_region' };\n  } else {\n    parsed = { intent: 'SQL', metric_name: null };\n  }\n}\nconst usage = llmResp.usage || {};\nreturn [{\n  json: {\n    chat_user_id: authCtx.chat_user_id,\n    prompt: authCtx.prompt,\n    is_voice: authCtx.is_voice,\n    export_format: authCtx.export_format,\n    jwt_token: authCtx.jwt_token,\n    intent: String(parsed.intent || 'SOP').toUpperCase(),\n    metric_name: parsed.metric_name || 'net_revenue_by_region',\n    model: llmResp.model || 'yggdrasil-default-llm',\n    prompt_tokens: Number(usage.prompt_tokens || 0),\n    completion_tokens: Number(usage.completion_tokens || 0),\n    total_tokens: Number(usage.total_tokens || 0)\n  }\n}];"
+      },
+      "id": "wf01-parse-intent",
+      "name": "Parse_Intent_And_Usage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1900, 220],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/y7l-token-log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ department: 'gateway', user_id: $json.chat_user_id, workflow: 'WF-01-intent-router', model: $json.model, prompt_tokens: $json.prompt_tokens, completion_tokens: $json.completion_tokens, total_tokens: $json.total_tokens, status: 'ok' }) }}",
+        "options": {}
+      },
+      "id": "wf01-log-tokens",
+      "name": "Log_Tokens_WF06",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2120, 220],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "KPI",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "rule-kpi",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $('Parse_Intent_And_Usage').first().json.intent }}",
+                    "rightValue": "KPI"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "SQL",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "rule-sql",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $('Parse_Intent_And_Usage').first().json.intent }}",
+                    "rightValue": "SQL"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "SOP",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "rule-sop",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ $('Parse_Intent_And_Usage').first().json.intent }}",
+                    "rightValue": "SOP"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf01-switch-intent",
+      "name": "Switch_Intent_Flow",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [2340, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'http://host.docker.internal:8300/metrics/saved/' + $('Parse_Intent_And_Usage').first().json.metric_name + '?export_format=' + $('Parse_Intent_And_Usage').first().json.export_format }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Parse_Intent_And_Usage').first().json.jwt_token }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf01-call-kpi",
+      "name": "Flow1_Saved_Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2580, 60],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/y7l-rag-sql",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: $('Parse_Intent_And_Usage').first().json.prompt, jwt_token: $('Parse_Intent_And_Usage').first().json.jwt_token, chat_user_id: $('Parse_Intent_And_Usage').first().json.chat_user_id, export_format: $('Parse_Intent_And_Usage').first().json.export_format }) }}",
+        "options": {}
+      },
+      "id": "wf01-call-sql",
+      "name": "Flow2_Call_WF02_SQL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2580, 220],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/y7l-rag-sop-query",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ prompt: $('Parse_Intent_And_Usage').first().json.prompt, chat_user_id: $('Parse_Intent_And_Usage').first().json.chat_user_id }) }}",
+        "options": {}
+      },
+      "id": "wf01-call-sop",
+      "name": "Flow3_Call_WF03_SOP",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2580, 380],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Parse_Intent_And_Usage').first().json;\nconst res = $input.first().json;\nconst replyText = res.answer || res.message || 'Đã xử lý xong yêu cầu của bạn.';\nreturn [{\n  json: {\n    intent: ctx.intent,\n    is_voice: ctx.is_voice,\n    reply_text: replyText,\n    artifact_url: res.artifact_url || null,\n    markdown_preview: res.markdown_preview || null,\n    citations: res.citations || []\n  }\n}];"
+      },
+      "id": "wf01-format-reply",
+      "name": "Format_Unified_Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2840, 220],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-voice-reply",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.is_voice }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf01-if-tts",
+      "name": "IF_Voice_Reply",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [3060, 220]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8300/voice/tts",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.reply_text }) }}",
+        "options": {}
+      },
+      "id": "wf01-http-tts",
+      "name": "Call_Sidecar_EdgeTTS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3280, 120],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ intent: $('Format_Unified_Reply').first().json.intent, reply_text: $('Format_Unified_Reply').first().json.reply_text, artifact_url: $('Format_Unified_Reply').first().json.artifact_url, markdown_preview: $('Format_Unified_Reply').first().json.markdown_preview, voice_reply_url: $json.artifact_url || null }) }}",
+        "options": {}
+      },
+      "id": "wf01-respond-voice",
+      "name": "Respond_Voice_Artifact",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [3500, 120]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ intent: $json.intent, reply_text: $json.reply_text, artifact_url: $json.artifact_url, markdown_preview: $json.markdown_preview, citations: $json.citations, voice_reply_url: null }) }}",
+        "options": {}
+      },
+      "id": "wf01-respond-text",
+      "name": "Respond_Text_Artifact",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [3300, 340]
+    }
+  ],
+  "connections": {
+    "Webhook_Chat_Or_Voice": {
+      "main": [[{"node": "Normalize_Inbound", "type": "main", "index": 0}]]
+    },
+    "Normalize_Inbound": {
+      "main": [[{"node": "IF_Needs_STT", "type": "main", "index": 0}]]
+    },
+    "IF_Needs_STT": {
+      "main": [
+        [{"node": "Call_Sidecar_Whisper_STT", "type": "main", "index": 0}],
+        [{"node": "Redis_Get_10h_JWT", "type": "main", "index": 0}]
+      ]
+    },
+    "Call_Sidecar_Whisper_STT": {
+      "main": [[{"node": "Merge_STT_Transcript", "type": "main", "index": 0}]]
+    },
+    "Merge_STT_Transcript": {
+      "main": [[{"node": "Redis_Get_10h_JWT", "type": "main", "index": 0}]]
+    },
+    "Redis_Get_10h_JWT": {
+      "main": [[{"node": "IF_Authenticated", "type": "main", "index": 0}]]
+    },
+    "IF_Authenticated": {
+      "main": [
+        [{"node": "LLM_Intent_Router", "type": "main", "index": 0}],
+        [{"node": "Respond_Login_Required", "type": "main", "index": 0}]
+      ]
+    },
+    "LLM_Intent_Router": {
+      "main": [[{"node": "Parse_Intent_And_Usage", "type": "main", "index": 0}]]
+    },
+    "Parse_Intent_And_Usage": {
+      "main": [[{"node": "Log_Tokens_WF06", "type": "main", "index": 0}]]
+    },
+    "Log_Tokens_WF06": {
+      "main": [[{"node": "Switch_Intent_Flow", "type": "main", "index": 0}]]
+    },
+    "Switch_Intent_Flow": {
+      "main": [
+        [{"node": "Flow1_Saved_Metrics", "type": "main", "index": 0}],
+        [{"node": "Flow2_Call_WF02_SQL", "type": "main", "index": 0}],
+        [{"node": "Flow3_Call_WF03_SOP", "type": "main", "index": 0}]
+      ]
+    },
+    "Flow1_Saved_Metrics": {
+      "main": [[{"node": "Format_Unified_Reply", "type": "main", "index": 0}]]
+    },
+    "Flow2_Call_WF02_SQL": {
+      "main": [[{"node": "Format_Unified_Reply", "type": "main", "index": 0}]]
+    },
+    "Flow3_Call_WF03_SOP": {
+      "main": [[{"node": "Format_Unified_Reply", "type": "main", "index": 0}]]
+    },
+    "Format_Unified_Reply": {
+      "main": [[{"node": "IF_Voice_Reply", "type": "main", "index": 0}]]
+    },
+    "IF_Voice_Reply": {
+      "main": [
+        [{"node": "Call_Sidecar_EdgeTTS", "type": "main", "index": 0}],
+        [{"node": "Respond_Text_Artifact", "type": "main", "index": 0}]
+      ]
+    },
+    "Call_Sidecar_EdgeTTS": {
+      "main": [[{"node": "Respond_Voice_Artifact", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

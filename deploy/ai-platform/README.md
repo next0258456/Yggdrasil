@@ -15,3 +15,8 @@ Hệ thống AI Platform của Yggdrasil được phân tách thành 3 nhánh đ
 3. ⚔️ [**03-y7l-native**](./03-y7l-native/README.md)
    * **Định vị:** The Y7L Way — Bản sắc tối giản cực đoan, Single-Node Hacker.
    * **Cốt lõi:** n8n Ingress, Redpanda 7-day Buffer, FastMCP, Obsidian Zero-Chunking, Single-Hop Circuit Breaker, Superset RLS, Embedded DuckDB, Bifrost Proxy, Valkyrie.
+
+---
+
+## Tài Liệu Dùng Chung (FinOps & Tuân Thủ Thuế)
+* 🧾 [**QUY_TRINH_FCT_VA_CHOT_SO_AI.md**](./QUY_TRINH_FCT_VA_CHOT_SO_AI.md) — Quy trình Thuế nhà thầu (FCT), cài MST/tải bill Google AI Studio, OpenAI, Anthropic và checklist 5 chứng từ chốt sổ cuối kỳ dùng chung cho cả 3 nhánh.

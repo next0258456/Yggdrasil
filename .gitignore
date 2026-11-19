@@ -52,8 +52,19 @@ deploy/ai-platform/01-nvidia-framework/output/
 *.safetensors*
 !deploy/ai-platform/01-nvidia-framework/output/
 
-# Model weights & Checkpoints
-*.pt
-*.bin
-*.onnx
-*.safetensors.gitkeep
+# Python & Tooling Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Y7L Native (03-y7l-native) local data, runtime exports & secrets
+deploy/ai-platform/03-y7l-native/.env
+deploy/ai-platform/03-y7l-native/.env.*
+!deploy/ai-platform/03-y7l-native/.env.example
+deploy/ai-platform/03-y7l-native/data/*.parquet
+deploy/ai-platform/03-y7l-native/data/exports/
+deploy/ai-platform/03-y7l-native/data/sample_iam_users.json

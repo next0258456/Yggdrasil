@@ -1,0 +1,492 @@
+{
+  "name": "Y7L 06 - FinOps Token Ledger to Google Sheet & Key Kill-Switch",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "y7l-token-log",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf06-webhook-log",
+      "name": "Webhook_Log_Token_Usage",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 160],
+      "webhookId": "y7l-token-log",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst now = new Date();\nconst model = String(body.model || 'yggdrasil-default-llm').trim();\nconst promptTokens = Math.max(0, Number(body.prompt_tokens || 0));\nconst completionTokens = Math.max(0, Number(body.completion_tokens || 0));\nconst totalTokens = Math.max(0, Number(body.total_tokens || (promptTokens + completionTokens)));\n\nconst PRICING_PER_1M = {\n  'yggdrasil-default-llm': [0.27, 1.10],\n  'deepseek-chat': [0.27, 1.10],\n  'gpt-4o-mini': [0.15, 0.60],\n  'gpt-4o': [2.50, 10.00],\n  'gemini-2.5-flash': [0.15, 0.60],\n  'nvidia/llama-3.1-nemotron-70b-instruct': [0.88, 0.88],\n  'text-embedding-3-small': [0.02, 0.00],\n  'whisper-1': [0.00, 0.00]\n};\nconst rates = PRICING_PER_1M[model.toLowerCase()] || [0.30, 1.20];\nconst estimatedCostUsd = Number(((promptTokens * rates[0] + completionTokens * rates[1]) / 1000000).toFixed(6));\nconst department = String(body.department || 'general');\nconst month = now.toISOString().slice(0, 7);\n\nreturn [{\n  json: {\n    timestamp: now.toISOString(),\n    month,\n    department,\n    user_id: String(body.user_id || 'anonymous'),\n    workflow: String(body.workflow || 'unknown'),\n    model,\n    prompt_tokens: promptTokens,\n    completion_tokens: completionTokens,\n    total_tokens: totalTokens,\n    estimated_cost_usd: estimatedCostUsd,\n    cost_micro_usd: Math.round(estimatedCostUsd * 1000000),\n    virtual_key: String(body.virtual_key || ''),\n    monthly_budget_usd: Number(body.monthly_budget_usd || 5.0),\n    status: String(body.status || 'ok')\n  }\n}];"
+      },
+      "id": "wf06-normalize-cost",
+      "name": "Normalize_And_Compute_Cost",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [360, 160],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resource": "sheet",
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "={{ $env.Y7L_FINOPS_SHEET_ID || 'REPLACE_WITH_GOOGLE_SHEET_ID' }}"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "name",
+          "value": "AI_Token_Ledger"
+        },
+        "range": "AI_Token_Ledger!A1:K1000",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "timestamp": {
+              "__rl": true,
+              "mode": "expression",
+              "value": "={{ $json.timestamp }}"
+            },
+            "month": {
+              "__rl": true,
+              "mode": "expression",
+              "value": "={{ $json.month }}"
+            },
+            "department": {
+              "__rl": true,
+              "mode": "expression",
+              "value": "={{ $json.department }}"
+            },
+            "user_id": {
+              "__rl": true,
+              "mode": "expression",
+              "value": "={{ $json.user_id }}"
+            },
+            "workflow": {
+              "__rl": true,
+              "mode": "expression",
+              "value": "={{ $json.workflow }}"
+            },
+            "model": {
+              "__rl": true,
+              "mode": "expression",
+              "value": "={{ $json.model }}"
+            },
+            "prompt_tokens": "={{ $json.prompt_tokens }}",
+            "completion_tokens": "={{ $json.completion_tokens }}",
+            "total_tokens": "={{ $json.total_tokens }}",
+            "estimated_cost_usd": "={{ $json.estimated_cost_usd }}",
+            "status": "={{ $json.status }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {"id": "timestamp", "displayName": "timestamp", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string"},
+            {"id": "month", "displayName": "month", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string"},
+            {"id": "department", "displayName": "department", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string"},
+            {"id": "user_id", "displayName": "user_id", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string"},
+            {"id": "workflow", "displayName": "workflow", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string"},
+            {"id": "model", "displayName": "model", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string"},
+            {"id": "prompt_tokens", "displayName": "prompt_tokens", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "number"},
+            {"id": "completion_tokens", "displayName": "completion_tokens", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "number"},
+            {"id": "total_tokens", "displayName": "total_tokens", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "number"},
+            {"id": "estimated_cost_usd", "displayName": "estimated_cost_usd", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "number"},
+            {"id": "status", "displayName": "status", "required": false, "defaultMatch": false, "canBeUsedToMatch": true, "display": true, "type": "string"}
+          ]
+        },
+        "options": {
+          "valueInputMode": "USER_ENTERED"
+        }
+      },
+      "id": "wf06-append-sheet",
+      "name": "GoogleSheets_Append_Ledger",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [600, 160],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "incr",
+        "key": "={{ 'y7l:finops:' + $('Normalize_And_Compute_Cost').first().json.department + ':' + $('Normalize_And_Compute_Cost').first().json.month }}",
+        "value": "={{ $('Normalize_And_Compute_Cost').first().json.cost_micro_usd }}",
+        "expire": true,
+        "ttl": 2678400
+      },
+      "id": "wf06-redis-incr",
+      "name": "Redis_Incr_Dept_Spend",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [840, 160],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-budget-exceeded",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ Boolean($('Normalize_And_Compute_Cost').first().json.virtual_key) && (Number(Object.values($json)[0] || 0) / 1000000) >= $('Normalize_And_Compute_Cost').first().json.monthly_budget_usd }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf06-if-over-budget",
+      "name": "IF_Monthly_Budget_Exceeded",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1080, 160]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/key/block",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-yggdrasil-master-admin-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ key: $('Normalize_And_Compute_Cost').first().json.virtual_key }) }}",
+        "options": {}
+      },
+      "id": "wf06-auto-block-key",
+      "name": "LiteLLM_Auto_Block_Key",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1320, 80],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ logged: true, budget_blocked: true, department: $('Normalize_And_Compute_Cost').first().json.department, estimated_cost_usd: $('Normalize_And_Compute_Cost').first().json.estimated_cost_usd }) }}",
+        "options": {}
+      },
+      "id": "wf06-respond-blocked",
+      "name": "Respond_Logged_And_Blocked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1560, 80]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ logged: true, budget_blocked: false, department: $('Normalize_And_Compute_Cost').first().json.department, model: $('Normalize_And_Compute_Cost').first().json.model, total_tokens: $('Normalize_And_Compute_Cost').first().json.total_tokens, estimated_cost_usd: $('Normalize_And_Compute_Cost').first().json.estimated_cost_usd }) }}",
+        "options": {}
+      },
+      "id": "wf06-respond-ok",
+      "name": "Respond_Token_Logged",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1320, 240]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "y7l-key-control",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf06-webhook-key-ctrl",
+      "name": "Webhook_LiteLLM_Key_Control",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 480],
+      "webhookId": "y7l-key-control",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "outputKey": "generate",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "key-gen",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ ($json.body || $json).action }}",
+                    "rightValue": "generate"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "block",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "key-blk",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ ($json.body || $json).action }}",
+                    "rightValue": "block"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "unblock",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "key-unblk",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ ($json.body || $json).action }}",
+                    "rightValue": "unblock"
+                  }
+                ]
+              }
+            },
+            {
+              "outputKey": "delete",
+              "renameOutput": true,
+              "conditions": {
+                "options": {
+                  "version": 2,
+                  "leftValue": "",
+                  "caseSensitive": true,
+                  "typeValidation": "strict"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "key-del",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "leftValue": "={{ ($json.body || $json).action }}",
+                    "rightValue": "delete"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf06-switch-key",
+      "name": "Switch_Key_Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.3,
+      "position": [360, 480]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/key/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-yggdrasil-master-admin-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(($json.body || $json).payload || {}) }}",
+        "options": {}
+      },
+      "id": "wf06-litellm-gen",
+      "name": "LiteLLM_Key_Generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [620, 340],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/key/block",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-yggdrasil-master-admin-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ key: ($json.body || $json).key }) }}",
+        "options": {}
+      },
+      "id": "wf06-litellm-block",
+      "name": "LiteLLM_Key_Block",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [620, 440],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/key/unblock",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-yggdrasil-master-admin-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ key: ($json.body || $json).key }) }}",
+        "options": {}
+      },
+      "id": "wf06-litellm-unblock",
+      "name": "LiteLLM_Key_Unblock",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [620, 540],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/key/delete",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-yggdrasil-master-admin-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ keys: [($json.body || $json).key] }) }}",
+        "options": {}
+      },
+      "id": "wf06-litellm-delete",
+      "name": "LiteLLM_Key_Delete",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [620, 640],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "allIncomingItems",
+        "options": {}
+      },
+      "id": "wf06-respond-key",
+      "name": "Respond_Key_Control_Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [900, 480]
+    }
+  ],
+  "connections": {
+    "Webhook_Log_Token_Usage": {
+      "main": [[{"node": "Normalize_And_Compute_Cost", "type": "main", "index": 0}]]
+    },
+    "Normalize_And_Compute_Cost": {
+      "main": [[{"node": "GoogleSheets_Append_Ledger", "type": "main", "index": 0}]]
+    },
+    "GoogleSheets_Append_Ledger": {
+      "main": [[{"node": "Redis_Incr_Dept_Spend", "type": "main", "index": 0}]]
+    },
+    "Redis_Incr_Dept_Spend": {
+      "main": [[{"node": "IF_Monthly_Budget_Exceeded", "type": "main", "index": 0}]]
+    },
+    "IF_Monthly_Budget_Exceeded": {
+      "main": [
+        [{"node": "LiteLLM_Auto_Block_Key", "type": "main", "index": 0}],
+        [{"node": "Respond_Token_Logged", "type": "main", "index": 0}]
+      ]
+    },
+    "LiteLLM_Auto_Block_Key": {
+      "main": [[{"node": "Respond_Logged_And_Blocked", "type": "main", "index": 0}]]
+    },
+    "Webhook_LiteLLM_Key_Control": {
+      "main": [[{"node": "Switch_Key_Action", "type": "main", "index": 0}]]
+    },
+    "Switch_Key_Action": {
+      "main": [
+        [{"node": "LiteLLM_Key_Generate", "type": "main", "index": 0}],
+        [{"node": "LiteLLM_Key_Block", "type": "main", "index": 0}],
+        [{"node": "LiteLLM_Key_Unblock", "type": "main", "index": 0}],
+        [{"node": "LiteLLM_Key_Delete", "type": "main", "index": 0}]
+      ]
+    },
+    "LiteLLM_Key_Generate": {
+      "main": [[{"node": "Respond_Key_Control_Result", "type": "main", "index": 0}]]
+    },
+    "LiteLLM_Key_Block": {
+      "main": [[{"node": "Respond_Key_Control_Result", "type": "main", "index": 0}]]
+    },
+    "LiteLLM_Key_Unblock": {
+      "main": [[{"node": "Respond_Key_Control_Result", "type": "main", "index": 0}]]
+    },
+    "LiteLLM_Key_Delete": {
+      "main": [[{"node": "Respond_Key_Control_Result", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,199 @@
+{
+  "name": "Y7L 04 - Webview OAuth Login (10h JWT)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "y7l-login",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf04-webhook-get",
+      "name": "GET_Webview_Login_Form",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 140],
+      "webhookId": "y7l-login",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ '<!doctype html><html lang=\"vi\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Y7L Đăng Nhập Zero-Trust</title></head><body style=\"font-family:sans-serif;max-width:380px;margin:40px auto;padding:16px;\"><h2>🔑 Đăng nhập Yggdrasil Mimir</h2><p>Phiên xác thực có hiệu lực <strong>10 tiếng</strong>. Mật khẩu được hủy ngay sau khi cấp JWT.</p><form method=\"POST\" action=\"/webhook/y7l-login-submit\"><input type=\"hidden\" name=\"chat_user_id\" value=\"' + (($json.query && $json.query.uid) || 'anonymous') + '\" /><label>Tên đăng nhập:<br><input name=\"username\" required style=\"width:100%;padding:8px;margin:6px 0 12px;\"></label><br><label>Mật khẩu:<br><input name=\"password\" type=\"password\" required style=\"width:100%;padding:8px;margin:6px 0 16px;\"></label><br><button type=\"submit\" style=\"width:100%;padding:10px;background:#0b5fff;color:#fff;border:0;border-radius:6px;\">Đăng nhập</button></form></body></html>' }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "wf04-respond-form",
+      "name": "Respond_HTML_Login_Form",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [360, 140]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "y7l-login-submit",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf04-webhook-post",
+      "name": "POST_Login_Submit",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 380],
+      "webhookId": "y7l-login-submit",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nreturn [{\n  json: {\n    username: String(body.username || '').trim(),\n    password: String(body.password || ''),\n    chat_user_id: String(body.chat_user_id || 'anonymous').trim()\n  }\n}];"
+      },
+      "id": "wf04-extract-creds",
+      "name": "Extract_Credentials",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [340, 380],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8300/auth/login",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ username: $json.username, password: $json.password, chat_user_id: $json.chat_user_id }) }}",
+        "options": {}
+      },
+      "id": "wf04-call-auth",
+      "name": "Exchange_Password_For_JWT",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [560, 380],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "cond-jwt-issued",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.access_token || '' }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf04-if-ok",
+      "name": "IF_Login_Succeeded",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [780, 380]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "={{ 'y7l:session:' + $('Extract_Credentials').first().json.chat_user_id }}",
+        "value": "={{ $json.access_token }}",
+        "keyType": "string",
+        "expire": true,
+        "ttl": 36000
+      },
+      "id": "wf04-redis-set",
+      "name": "Redis_Store_10h_JWT",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1020, 280],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!doctype html><html lang=\"vi\"><head><meta charset=\"utf-8\"></head><body style=\"font-family:sans-serif;text-align:center;margin-top:60px;\"><h2>✅ Đăng nhập thành công!</h2><p>JWT 10 tiếng đã được kích hoạt. Bạn có thể đóng cửa sổ Webview và quay lại chat.</p></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "wf04-respond-success",
+      "name": "Respond_Login_Success_HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1260, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!doctype html><html lang=\"vi\"><head><meta charset=\"utf-8\"></head><body style=\"font-family:sans-serif;text-align:center;margin-top:60px;\"><h2>❌ Đăng nhập thất bại</h2><p>Sai tài khoản, mật khẩu hoặc tài khoản đã bị khóa.</p></body></html>",
+        "options": {
+          "responseCode": 401,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      },
+      "id": "wf04-respond-fail",
+      "name": "Respond_Login_Failed_HTML",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1020, 480]
+    }
+  ],
+  "connections": {
+    "GET_Webview_Login_Form": {
+      "main": [[{"node": "Respond_HTML_Login_Form", "type": "main", "index": 0}]]
+    },
+    "POST_Login_Submit": {
+      "main": [[{"node": "Extract_Credentials", "type": "main", "index": 0}]]
+    },
+    "Extract_Credentials": {
+      "main": [[{"node": "Exchange_Password_For_JWT", "type": "main", "index": 0}]]
+    },
+    "Exchange_Password_For_JWT": {
+      "main": [[{"node": "IF_Login_Succeeded", "type": "main", "index": 0}]]
+    },
+    "IF_Login_Succeeded": {
+      "main": [
+        [{"node": "Redis_Store_10h_JWT", "type": "main", "index": 0}],
+        [{"node": "Respond_Login_Failed_HTML", "type": "main", "index": 0}]
+      ]
+    },
+    "Redis_Store_10h_JWT": {
+      "main": [[{"node": "Respond_Login_Success_HTML", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

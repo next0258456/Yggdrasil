@@ -1,0 +1,303 @@
+{
+  "name": "Y7L 03 - RAG SOP Hybrid Search in n8n (Ingest + Query)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "y7l-rag-sop-ingest",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf03-webhook-ingest",
+      "name": "Webhook_SOP_Ingest",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 120],
+      "webhookId": "y7l-rag-sop-ingest",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8300/ocr/extract",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "wf03-extract-doc",
+      "name": "Extract_Text_And_Chunks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [340, 120],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const doc = $input.first().json;\nconst chunks = Array.isArray(doc.chunks) ? doc.chunks : [];\nconst docId = String(doc.filename || 'sop_doc').replace(/[^A-Za-z0-9_.-]/g, '_');\nreturn chunks.map((ch) => ({\n  json: {\n    doc_id: docId,\n    doc_title: doc.filename || docId,\n    chunk_index: Number(ch.chunk_index || 0),\n    content: String(ch.content || '')\n  }\n}));"
+      },
+      "id": "wf03-split-items",
+      "name": "Split_Document_Chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [560, 120],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/v1/embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-yggdrasil-master-admin-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'text-embedding-3-small', input: $json.content }) }}",
+        "options": {}
+      },
+      "id": "wf03-embed-chunk",
+      "name": "Embed_Chunk_LiteLLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [780, 120],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/y7l-token-log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ department: 'knowledge', user_id: 'sop_ingestor', workflow: 'WF-03-sop-ingest', model: $json.model || 'text-embedding-3-small', prompt_tokens: Number(($json.usage && $json.usage.prompt_tokens) || 0), completion_tokens: 0, total_tokens: Number(($json.usage && $json.usage.total_tokens) || 0), status: 'ok' }) }}",
+        "options": {}
+      },
+      "id": "wf03-log-embed-tokens",
+      "name": "Log_Ingest_Tokens_WF06",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1000, 120],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO y7l_sop_chunks (doc_id, doc_title, chunk_index, content, embedding) VALUES ($1, $2, $3, $4, $5::vector) ON CONFLICT (doc_id, chunk_index) DO UPDATE SET content = EXCLUDED.content, embedding = EXCLUDED.embedding;",
+        "options": {
+          "queryReplacement": "={{ [ $('Split_Document_Chunks').item.json.doc_id, $('Split_Document_Chunks').item.json.doc_title, $('Split_Document_Chunks').item.json.chunk_index, $('Split_Document_Chunks').item.json.content, '[' + $('Embed_Chunk_LiteLLM').item.json.data[0].embedding.join(',') + ']' ] }}"
+        }
+      },
+      "id": "wf03-pg-upsert",
+      "name": "Postgres_Upsert_SOP_Chunk",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1220, 120],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'ingested', doc_title: $('Split_Document_Chunks').first().json.doc_title }) }}",
+        "options": {}
+      },
+      "id": "wf03-respond-ingest",
+      "name": "Respond_Ingest_OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1440, 120]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "y7l-rag-sop-query",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf03-webhook-query",
+      "name": "Webhook_SOP_Hybrid_Query",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 420],
+      "webhookId": "y7l-rag-sop-query",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/v1/embeddings",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-yggdrasil-master-admin-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'text-embedding-3-small', input: ($json.body || $json).prompt || '' }) }}",
+        "options": {}
+      },
+      "id": "wf03-embed-query",
+      "name": "Embed_Query_LiteLLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [340, 420],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, doc_id, doc_title, chunk_index, content, rrf_score FROM y7l_hybrid_search_sop($1, $2::vector, 3, 60);",
+        "options": {
+          "queryReplacement": "={{ [ ($('Webhook_SOP_Hybrid_Query').first().json.body || $('Webhook_SOP_Hybrid_Query').first().json).prompt, '[' + $json.data[0].embedding.join(',') + ']' ] }}"
+        }
+      },
+      "id": "wf03-pg-hybrid",
+      "name": "Postgres_Hybrid_Search",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [560, 420],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all().map((i) => i.json);\nconst q = $('Webhook_SOP_Hybrid_Query').first().json;\nconst body = q.body || q;\nlet totalBytes = 0;\nconst snippets = [];\nconst citations = [];\nfor (const r of rows) {\n  if (!r.content) continue;\n  const block = `[${r.doc_title}#${r.chunk_index}] ${r.content}`;\n  const size = Buffer.byteLength(block, 'utf8');\n  if (totalBytes + size > 4000) break;\n  totalBytes += size;\n  snippets.push(block);\n  citations.push({ doc_id: r.doc_id, doc_title: r.doc_title, chunk_index: r.chunk_index, rrf_score: r.rrf_score });\n}\nreturn [{\n  json: {\n    prompt: String(body.prompt || ''),\n    chat_user_id: String(body.chat_user_id || 'anonymous'),\n    context_text: snippets.join('\\n\\n'),\n    citations\n  }\n}];"
+      },
+      "id": "wf03-pack-top3",
+      "name": "Pack_Top3_Under_4KB",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [780, 420],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-yggdrasil-master-admin-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'yggdrasil-default-llm', temperature: 0.1, messages: [{ role: 'system', content: 'Chỉ trả lời dựa trên tài liệu SOP sau và trích dẫn mã tài liệu. Nếu không đủ căn cứ, nói rõ không tìm thấy trong SOP.\\n\\n' + ($json.context_text || '') }, { role: 'user', content: $json.prompt }] }) }}",
+        "options": {}
+      },
+      "id": "wf03-llm-synth",
+      "name": "LLM_Synthesize_SOP_Answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1000, 420],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ctx = $('Pack_Top3_Under_4KB').first().json;\nconst llm = $input.first().json;\nconst choices = Array.isArray(llm.choices) ? llm.choices : [];\nconst usage = llm.usage || {};\nreturn [{\n  json: {\n    chat_user_id: ctx.chat_user_id,\n    answer: (choices[0] && choices[0].message && choices[0].message.content) || '',\n    citations: ctx.citations,\n    model: llm.model || 'yggdrasil-default-llm',\n    prompt_tokens: Number(usage.prompt_tokens || 0),\n    completion_tokens: Number(usage.completion_tokens || 0),\n    total_tokens: Number(usage.total_tokens || 0)\n  }\n}];"
+      },
+      "id": "wf03-extract-answer",
+      "name": "Format_SOP_Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1220, 420],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/y7l-token-log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ department: 'knowledge', user_id: $json.chat_user_id, workflow: 'WF-03-sop-query', model: $json.model, prompt_tokens: $json.prompt_tokens, completion_tokens: $json.completion_tokens, total_tokens: $json.total_tokens, status: 'ok' }) }}",
+        "options": {}
+      },
+      "id": "wf03-log-query-tokens",
+      "name": "Log_Query_Tokens_WF06",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1440, 420],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ answer: $('Format_SOP_Response').first().json.answer, citations: $('Format_SOP_Response').first().json.citations }) }}",
+        "options": {}
+      },
+      "id": "wf03-respond-query",
+      "name": "Respond_SOP_Answer",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1680, 420]
+    }
+  ],
+  "connections": {
+    "Webhook_SOP_Ingest": {
+      "main": [[{"node": "Extract_Text_And_Chunks", "type": "main", "index": 0}]]
+    },
+    "Extract_Text_And_Chunks": {
+      "main": [[{"node": "Split_Document_Chunks", "type": "main", "index": 0}]]
+    },
+    "Split_Document_Chunks": {
+      "main": [[{"node": "Embed_Chunk_LiteLLM", "type": "main", "index": 0}]]
+    },
+    "Embed_Chunk_LiteLLM": {
+      "main": [[{"node": "Log_Ingest_Tokens_WF06", "type": "main", "index": 0}]]
+    },
+    "Log_Ingest_Tokens_WF06": {
+      "main": [[{"node": "Postgres_Upsert_SOP_Chunk", "type": "main", "index": 0}]]
+    },
+    "Postgres_Upsert_SOP_Chunk": {
+      "main": [[{"node": "Respond_Ingest_OK", "type": "main", "index": 0}]]
+    },
+    "Webhook_SOP_Hybrid_Query": {
+      "main": [[{"node": "Embed_Query_LiteLLM", "type": "main", "index": 0}]]
+    },
+    "Embed_Query_LiteLLM": {
+      "main": [[{"node": "Postgres_Hybrid_Search", "type": "main", "index": 0}]]
+    },
+    "Postgres_Hybrid_Search": {
+      "main": [[{"node": "Pack_Top3_Under_4KB", "type": "main", "index": 0}]]
+    },
+    "Pack_Top3_Under_4KB": {
+      "main": [[{"node": "LLM_Synthesize_SOP_Answer", "type": "main", "index": 0}]]
+    },
+    "LLM_Synthesize_SOP_Answer": {
+      "main": [[{"node": "Format_SOP_Response", "type": "main", "index": 0}]]
+    },
+    "Format_SOP_Response": {
+      "main": [[{"node": "Log_Query_Tokens_WF06", "type": "main", "index": 0}]]
+    },
+    "Log_Query_Tokens_WF06": {
+      "main": [[{"node": "Respond_SOP_Answer", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

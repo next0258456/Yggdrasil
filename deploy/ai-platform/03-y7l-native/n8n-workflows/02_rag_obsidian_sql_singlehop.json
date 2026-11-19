@@ -1,0 +1,164 @@
+{
+  "name": "Y7L 02 - RAG Obsidian Zero-Chunking & Single-Hop SQL",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "y7l-rag-sql",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf02-webhook-sql",
+      "name": "Webhook_SQL_RAG",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [120, 260],
+      "webhookId": "y7l-rag-sql",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json;\nconst rawPrompt = String(body.prompt || '');\nlet masked = rawPrompt;\nconst maskedTypes = [];\n\nconst bankRe = /\\b(stk|số\\s+tài\\s+khoản|so\\s+tai\\s+khoan|tài\\s+khoản|tai\\s+khoan|account(?:\\s+no\\.?|\\s+number)?)\\s*([:#-]?)\\s*(\\d{9,16})\\b/gi;\nif (bankRe.test(masked)) {\n  maskedTypes.push('bank_account');\n  masked = masked.replace(bankRe, '$1$2 [REDACTED_BANK_ACCOUNT]');\n}\nconst emailRe = /\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}\\b/g;\nif (emailRe.test(masked)) {\n  maskedTypes.push('email');\n  masked = masked.replace(emailRe, '[REDACTED_EMAIL]');\n}\nconst phoneRe = /(?<!\\d)(?:\\+84|0)(?:3|5|7|8|9)\\d{8}(?!\\d)/g;\nif (phoneRe.test(masked)) {\n  maskedTypes.push('phone');\n  masked = masked.replace(phoneRe, '[REDACTED_PHONE]');\n}\nconst cccdRe = /(?<!\\d)\\d{12}(?!\\d)/g;\nif (cccdRe.test(masked)) {\n  maskedTypes.push('cccd');\n  masked = masked.replace(cccdRe, '[REDACTED_CCCD]');\n}\n\nreturn [{\n  json: {\n    prompt: masked,\n    masked_types: maskedTypes,\n    jwt_token: String(body.jwt_token || ''),\n    chat_user_id: String(body.chat_user_id || 'anonymous'),\n    export_format: String(body.export_format || 'csv')\n  }\n}];"
+      },
+      "id": "wf02-mask-pii",
+      "name": "Safety_Relay_Mask_PII",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [340, 260],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8300/vault/context",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.prompt, max_depth: 1, max_bytes: 12000 }) }}",
+        "options": {}
+      },
+      "id": "wf02-fetch-obsidian",
+      "name": "Fetch_Obsidian_Context",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [560, 260],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:4000/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer sk-yggdrasil-master-admin-2026"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'yggdrasil-default-llm', temperature: 0, messages: [{ role: 'system', content: 'Bạn là DuckDB SQL Planner (Single-Hop). CHỈ trả về DUY NHẤT 1 câu lệnh SELECT hợp lệ theo DuckDB SQL, không giải thích, không markdown fence. TUÂN THỦ TUYỆT ĐỐI mọi DATA_TRAP trong ngữ cảnh Obsidian dưới đây:\\n\\n' + ($json.context_markdown || '') }, { role: 'user', content: $('Safety_Relay_Mask_PII').first().json.prompt }] }) }}",
+        "options": {}
+      },
+      "id": "wf02-llm-sql-gen",
+      "name": "LLM_SingleHop_SQL_Planner",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [780, 260],
+      "retryOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const inbound = $('Safety_Relay_Mask_PII').first().json;\nconst llmResp = $input.first().json;\nconst choices = Array.isArray(llmResp.choices) ? llmResp.choices : [];\nconst rawSql = String((choices[0] && choices[0].message && choices[0].message.content) || '');\nconst cleanSql = rawSql.replace(/^```(?:sql)?\\s*/i, '').replace(/\\s*```$/i, '').trim();\nconst usage = llmResp.usage || {};\nreturn [{\n  json: {\n    sql: cleanSql,\n    jwt_token: inbound.jwt_token,\n    chat_user_id: inbound.chat_user_id,\n    export_format: inbound.export_format,\n    model: llmResp.model || 'yggdrasil-default-llm',\n    prompt_tokens: Number(usage.prompt_tokens || 0),\n    completion_tokens: Number(usage.completion_tokens || 0),\n    total_tokens: Number(usage.total_tokens || 0)\n  }\n}];"
+      },
+      "id": "wf02-extract-sql",
+      "name": "Extract_Single_SQL_And_Usage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 260],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/y7l-token-log",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ department: 'analytics', user_id: $json.chat_user_id, workflow: 'WF-02-obsidian-sql', model: $json.model, prompt_tokens: $json.prompt_tokens, completion_tokens: $json.completion_tokens, total_tokens: $json.total_tokens, status: 'ok' }) }}",
+        "options": {}
+      },
+      "id": "wf02-log-tokens",
+      "name": "Log_Tokens_WF06",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1220, 260],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8300/sql/execute-rls",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + $('Extract_Single_SQL_And_Usage').first().json.jwt_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ sql: $('Extract_Single_SQL_And_Usage').first().json.sql, export_format: $('Extract_Single_SQL_And_Usage').first().json.export_format }) }}",
+        "options": {}
+      },
+      "id": "wf02-exec-rls",
+      "name": "Execute_DuckDB_RLS",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1440, 260],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ empty: Boolean($json.empty), message: $json.message || $json.detail || 'Lỗi thực thi SQL', row_count: Number($json.row_count || 0), artifact_url: $json.artifact_url || null, markdown_preview: $json.markdown_preview || '', data_trap_warnings: $json.data_trap_warnings || [], single_hop_bypassed_llm: true }) }}",
+        "options": {}
+      },
+      "id": "wf02-respond-direct",
+      "name": "Respond_Direct_To_User",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [1680, 260]
+    }
+  ],
+  "connections": {
+    "Webhook_SQL_RAG": {
+      "main": [[{"node": "Safety_Relay_Mask_PII", "type": "main", "index": 0}]]
+    },
+    "Safety_Relay_Mask_PII": {
+      "main": [[{"node": "Fetch_Obsidian_Context", "type": "main", "index": 0}]]
+    },
+    "Fetch_Obsidian_Context": {
+      "main": [[{"node": "LLM_SingleHop_SQL_Planner", "type": "main", "index": 0}]]
+    },
+    "LLM_SingleHop_SQL_Planner": {
+      "main": [[{"node": "Extract_Single_SQL_And_Usage", "type": "main", "index": 0}]]
+    },
+    "Extract_Single_SQL_And_Usage": {
+      "main": [[{"node": "Log_Tokens_WF06", "type": "main", "index": 0}]]
+    },
+    "Log_Tokens_WF06": {
+      "main": [[{"node": "Execute_DuckDB_RLS", "type": "main", "index": 0}]]
+    },
+    "Execute_DuckDB_RLS": {
+      "main": [[{"node": "Respond_Direct_To_User", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
